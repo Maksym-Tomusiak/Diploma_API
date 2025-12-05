@@ -1,8 +1,14 @@
 from pydantic import BaseModel, EmailStr, Field
 from pydantic_settings import SettingsConfigDict
 from datetime import datetime
+from enum import Enum
 
-from models.user import User, UserRole  # Import actual SQLAlchemy enum
+from models.user import User, UserRole
+
+
+class UserRoleStr(str, Enum):
+    user = "user"
+    admin = "admin"
 
 
 class UserCreate(BaseModel):
@@ -12,7 +18,7 @@ class UserCreate(BaseModel):
 class UserDto(BaseModel):
     id: int = Field(..., gt=0)
     email: EmailStr
-    role: UserRole  # Use actual SQLAlchemy enum (not string enum)
+    role: UserRoleStr
     created_at: datetime
 
     @staticmethod
@@ -20,7 +26,7 @@ class UserDto(BaseModel):
         return UserDto(
             id=user.id,
             email=user.email,
-            role=user.role,  # Pydantic automatically converts SQLAlchemy enum
+            role=user.role,
             created_at=user.created_at
         )
 
