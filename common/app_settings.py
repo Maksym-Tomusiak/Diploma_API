@@ -7,6 +7,7 @@ class AppSettings(BaseSettings):
     GOOGLE_CLIENT_ID: str = Field(default="")
     GOOGLE_CLIENT_SECRET: str = Field(default="")
     SECRET_KEY: str = Field(default="supersecretkeychangeme")
+    FRONTEND_URL: str = Field(default="http://localhost:3000")
 
     model_config = SettingsConfigDict(
         env_file=".env",

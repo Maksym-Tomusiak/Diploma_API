@@ -43,3 +43,8 @@ def read_root():
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+if __name__ == "__main__":
+    import uvicorn
+    # You can change the port here if 8000 is taken
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Request, HTTPException, status
+from fastapi.responses import RedirectResponse
 
+from common.app_settings import settings
 from core import AuthServiceDependency, CurrentUserDependency
 from schemas.auth import TokenResponse, RefreshTokenRequest, GoogleAuthUrl
 from schemas.user import UserDto
@@ -19,7 +21,7 @@ async def login(request: Request, auth_service: AuthServiceDependency):
     return GoogleAuthUrl(authorization_url=authorization_url)
 
 
-@auth_router.get("/callback", response_model=TokenResponse)
+@auth_router.get("/callback")
 async def auth_callback(
     request: Request,
     code: str,
@@ -27,20 +29,21 @@ async def auth_callback(
 ):
     """
     Handle Google OAuth callback.
-    Returns JWT access and refresh tokens.
+    Redirects to frontend with JWT access token.
     """
     redirect_uri = str(request.url_for("auth_callback"))
     try:
         user, access_token, refresh_token = auth_service.process_google_callback(code, redirect_uri)
-        return TokenResponse(
-            access_token=access_token,
-            token_type="bearer",
-            expires_in=3600,  # 1 hour in seconds
+        # Redirect to frontend with token
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/callback?token={access_token}",
+            status_code=status.HTTP_302_FOUND
         )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"OAuth callback failed: {str(e)}",
+        # Redirect to frontend with error
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/callback?error={str(e)}",
+            status_code=status.HTTP_302_FOUND
         )
 
 
