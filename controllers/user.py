@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 
-from core import UserServiceDependency, CurrentUserDependency, AdminUserDependency
+from core import UserServiceDependency, CurrentUserDependency, AdminUserDependency, UserActionLogServiceDependency
 from schemas.user import UserDto
 
 user_router = APIRouter(prefix="/users", tags=["Users"])
@@ -64,3 +64,41 @@ async def delete_user(
     Delete a user (admin only).
     """
     return user_service.delete_user(user_id)
+
+
+@user_router.post("/{user_id}/ban", response_model=UserDto)
+async def ban_user(
+    user_id: int,
+    admin_user: AdminUserDependency,
+    user_service: UserServiceDependency,
+    log_service: UserActionLogServiceDependency,
+    request: Request,
+):
+    """Ban a user (admin only)."""
+    result = user_service.ban_user(user_id)
+    # Log action
+    log_service.log_action(
+        user_id=admin_user.id,
+        action_type="ADMIN_BAN_USER",
+        details={"banned_user_id": user_id, "ip_address": request.client.host if request.client else None},
+    )
+    return result
+
+
+@user_router.post("/{user_id}/unban", response_model=UserDto)
+async def unban_user(
+    user_id: int,
+    admin_user: AdminUserDependency,
+    user_service: UserServiceDependency,
+    log_service: UserActionLogServiceDependency,
+    request: Request,
+):
+    """Unban a user (admin only)."""
+    result = user_service.unban_user(user_id)
+    # Log action
+    log_service.log_action(
+        user_id=admin_user.id,
+        action_type="ADMIN_UNBAN_USER",
+        details={"unbanned_user_id": user_id, "ip_address": request.client.host if request.client else None},
+    )
+    return result

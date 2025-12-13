@@ -13,6 +13,7 @@ class UserDto(BaseModel):
     id: int = Field(..., gt=0)
     email: EmailStr
     role: UserRole  # Use actual SQLAlchemy enum (not string enum)
+    is_banned: bool = False
     created_at: datetime
 
     @staticmethod
@@ -21,6 +22,7 @@ class UserDto(BaseModel):
             id=user.id,
             email=user.email,
             role=user.role,  # Pydantic automatically converts SQLAlchemy enum
+            is_banned=getattr(user, "is_banned", False),
             created_at=user.created_at
         )
 

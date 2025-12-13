@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 
-from core import DocumentServiceDependency, CurrentUserDependency
+from core import DocumentServiceDependency, CurrentUserDependency, UserActionLogServiceDependency
 from schemas.document import DocumentCreate, DocumentDto
 
 document_router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -41,11 +41,34 @@ async def create_document(
     data: DocumentCreate,
     current_user: CurrentUserDependency,
     document_service: DocumentServiceDependency,
+    log_service: UserActionLogServiceDependency,
+    request: Request,
 ):
     """
     Create a new document for formatting check.
     """
-    return document_service.create_document(data, current_user)
+    # Explicit check for banned users
+    if current_user.is_banned:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot create documents while your account is banned",
+        )
+    
+    document = document_service.create_document(data, current_user)
+    
+    # Log document creation
+    log_service.log_action(
+        user_id=current_user.id,
+        action_type="DOCUMENT_CREATE",
+        details={
+            "document_id": document.id,
+            "google_doc_id": data.google_doc_id,
+            "title": data.title,
+            "ip_address": request.client.host if request.client else None,
+        }
+    )
+    
+    return document
 
 
 @document_router.delete("/{document_id}", response_model=DocumentDto)
@@ -53,9 +76,30 @@ async def delete_document(
     document_id: int,
     current_user: CurrentUserDependency,
     document_service: DocumentServiceDependency,
+    log_service: UserActionLogServiceDependency,
+    request: Request,
 ):
     """
     Delete a document.
     Only the document owner can delete it.
     """
-    return document_service.delete_document(document_id, current_user.id)
+    # Explicit check for banned users
+    if current_user.is_banned:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot delete documents while your account is banned",
+        )
+    
+    document = document_service.delete_document(document_id, current_user.id)
+    
+    # Log document deletion
+    log_service.log_action(
+        user_id=current_user.id,
+        action_type="DOCUMENT_DELETE",
+        details={
+            "document_id": document_id,
+            "ip_address": request.client.host if request.client else None,
+        }
+    )
+    
+    return document

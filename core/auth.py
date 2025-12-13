@@ -187,7 +187,14 @@ async def get_current_user(
     auth_service: AuthServiceDependency = None,
 ) -> User:
     """FastAPI dependency to get the current authenticated user."""
-    return auth_service.get_current_user_from_token(credentials.credentials)
+    user = auth_service.get_current_user_from_token(credentials.credentials)
+    # Restrict banned users from using the API
+    if getattr(user, "is_banned", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is banned",
+        )
+    return user
 
 
 CurrentUserDependency = Annotated[User, Depends(get_current_user)]

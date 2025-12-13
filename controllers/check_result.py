@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 
-from core import CheckResultServiceDependency, CurrentUserDependency
+from core import CheckResultServiceDependency, CurrentUserDependency, UserActionLogServiceDependency
 from schemas.check_result import CheckResultDto
 
 check_result_router = APIRouter(prefix="/check-results", tags=["Check Results"])
@@ -11,6 +11,8 @@ async def get_check_result(
     check_result_id: int,
     current_user: CurrentUserDependency,
     check_result_service: CheckResultServiceDependency,
+    log_service: UserActionLogServiceDependency,
+    request: Request,
 ):
     """
     Get a specific check result by ID.
@@ -22,6 +24,18 @@ async def get_check_result(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Check result not found",
         )
+    
+    # Log check result access
+    log_service.log_action(
+        user_id=current_user.id,
+        action_type="CHECK_RESULT_VIEW",
+        details={
+            "check_result_id": check_result_id,
+            "document_id": check_result.document_id,
+            "ip_address": request.client.host if request.client else None,
+        }
+    )
+    
     return check_result
 
 

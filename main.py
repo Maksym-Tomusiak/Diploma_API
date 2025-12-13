@@ -8,6 +8,7 @@ from controllers import (
     document_router,
     template_router,
     check_result_router,
+    user_action_log_router,
 )
 
 app = FastAPI(
@@ -31,6 +32,7 @@ app.include_router(user_router, prefix="/v1")
 app.include_router(document_router, prefix="/v1")
 app.include_router(template_router, prefix="/v1")
 app.include_router(check_result_router, prefix="/v1")
+app.include_router(user_action_log_router, prefix="/v1")
 
 
 @app.get("/")

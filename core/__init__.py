@@ -10,6 +10,7 @@ from core.user import UserService, UserServiceDependency
 from core.document import DocumentService, DocumentServiceDependency
 from core.template import TemplateService, TemplateServiceDependency
 from core.check_result import CheckResultService, CheckResultServiceDependency
+from core.user_action_log import UserActionLogService, UserActionLogServiceDependency
 
 __all__ = [
     # Auth
@@ -28,4 +29,6 @@ __all__ = [
     "TemplateServiceDependency",
     "CheckResultService",
     "CheckResultServiceDependency",
+    "UserActionLogService",
+    "UserActionLogServiceDependency",
 ]

@@ -63,5 +63,29 @@ class UserService:
         deleted_user = self.user_repository.delete_user(user)
         return UserDto.from_user(deleted_user)
 
+    def ban_user(self, user_id: int) -> UserDto:
+        """Ban a user (admin only)."""
+        user = self.user_repository.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        user.is_banned = True
+        updated = self.user_repository.update_user(user)
+        return UserDto.from_user(updated)
+
+    def unban_user(self, user_id: int) -> UserDto:
+        """Unban a user (admin only)."""
+        user = self.user_repository.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found",
+            )
+        user.is_banned = False
+        updated = self.user_repository.update_user(user)
+        return UserDto.from_user(updated)
+
 
 UserServiceDependency = Annotated[UserService, Depends(UserService)]

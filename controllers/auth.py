@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request, HTTPException, status
 from fastapi.responses import RedirectResponse
 
 from common.app_settings import settings
-from core import AuthServiceDependency, CurrentUserDependency
+from core import AuthServiceDependency, CurrentUserDependency, UserActionLogServiceDependency
 from schemas.auth import TokenResponse, RefreshTokenRequest, GoogleAuthUrl
 from schemas.user import UserDto
 
@@ -26,6 +26,7 @@ async def auth_callback(
     request: Request,
     code: str,
     auth_service: AuthServiceDependency,
+    log_service: UserActionLogServiceDependency,
 ):
     """
     Handle Google OAuth callback.
@@ -34,6 +35,17 @@ async def auth_callback(
     redirect_uri = str(request.url_for("auth_callback"))
     try:
         user, access_token, refresh_token = auth_service.process_google_callback(code, redirect_uri)
+        
+        # Log the login action
+        log_service.log_action(
+            user_id=user.id,
+            action_type="LOGIN",
+            details={
+                "method": "google_oauth",
+                "ip_address": request.client.host if request.client else None,
+            }
+        )
+        
         # Redirect to frontend with token
         return RedirectResponse(
             url=f"{settings.FRONTEND_URL}/auth/callback?token={access_token}",
@@ -74,10 +86,23 @@ async def get_current_user_info(current_user: CurrentUserDependency):
 
 
 @auth_router.post("/logout")
-async def logout(current_user: CurrentUserDependency):
+async def logout(
+    current_user: CurrentUserDependency,
+    log_service: UserActionLogServiceDependency,
+    request: Request,
+):
     """
     Logout current user.
     Note: JWT tokens are stateless, so this just returns success.
     Client should discard the tokens.
     """
+    # Log the logout action
+    log_service.log_action(
+        user_id=current_user.id,
+        action_type="LOGOUT",
+        details={
+            "ip_address": request.client.host if request.client else None,
+        }
+    )
+    
     return {"message": "Successfully logged out"}
