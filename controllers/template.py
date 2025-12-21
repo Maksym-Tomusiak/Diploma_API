@@ -1,29 +1,21 @@
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
 
 from core import TemplateServiceDependency, CurrentUserDependency, AdminUserDependency
-from schemas.template import TemplateCreate, TemplateDto, TemplateParams
+from schemas.template import TemplateCreate, TemplateDto, TemplateUpdate
 
 template_router = APIRouter(prefix="/templates", tags=["Templates"])
 
 
-class TemplateUpdate(BaseModel):
-    name: Optional[str] = Field(None, max_length=255)
-    description: Optional[str] = Field(None, max_length=1000)
-    params: Optional[TemplateParams] = None
-    is_active: Optional[bool] = None
-
-
-@template_router.get("", response_model=list[TemplateDto])
+@template_router.get("", response_model=dict)
 async def get_all_templates(
     current_user: CurrentUserDependency,
     template_service: TemplateServiceDependency,
     include_inactive: bool = False,
+    skip: int = 0,
+    limit: int = 10,
 ):
     """
-    Get all templates.
+    Get all templates with pagination.
     Regular users only see active templates.
     Admins can see inactive templates with include_inactive=True.
     """
@@ -33,7 +25,15 @@ async def get_all_templates(
     if include_inactive and current_user.role != UserRole.ADMIN:
         include_inactive = False
     
-    return template_service.get_all_templates(include_inactive=include_inactive)
+    templates = template_service.get_all_templates(include_inactive=include_inactive)
+    total = len(templates)
+    paginated_templates = templates[skip:skip+limit]
+    return {
+        "templates": paginated_templates,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
 
 
 @template_router.get("/{template_id}", response_model=TemplateDto)
@@ -81,6 +81,7 @@ async def update_template(
         template_id,
         name=data.name,
         description=data.description,
+        font_id=data.font_id,
         params=params_dict,
         is_active=data.is_active,
     )

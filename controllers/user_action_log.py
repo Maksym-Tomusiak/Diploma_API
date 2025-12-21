@@ -12,17 +12,17 @@ from schemas.user_action_log import UserActionLogDto, UserActionLogListResponse
 user_action_log_router = APIRouter(prefix="/logs", tags=["User Action Logs"])
 
 
-@user_action_log_router.get("", response_model=UserActionLogListResponse)
-async def get_all_logs(
+@user_action_log_router.get("")
+def get_all_logs(
     admin_user: AdminUserDependency,
     log_service: UserActionLogServiceDependency,
-    limit: int = Query(100, ge=1, le=1000, description="Number of logs to return"),
-    offset: int = Query(0, ge=0, description="Number of logs to skip"),
+    limit: int = Query(10, ge=1, le=1000, description="Number of logs to return"),
+    skip: int = Query(0, ge=0, description="Number of logs to skip"),
     action_type: Optional[str] = Query(None, description="Filter by action type"),
     user_id: Optional[int] = Query(None, description="Filter by user ID"),
     start_date: Optional[datetime] = Query(None, description="Filter by start date (ISO format)"),
     end_date: Optional[datetime] = Query(None, description="Filter by end date (ISO format)"),
-):
+) -> dict:
     """
     Get all user action logs with optional filters (admin only).
     
@@ -34,19 +34,19 @@ async def get_all_logs(
     """
     logs, total = log_service.get_all_logs(
         limit=limit,
-        offset=offset,
+        offset=skip,
         action_type=action_type,
         user_id=user_id,
         start_date=start_date,
         end_date=end_date
     )
     
-    return UserActionLogListResponse(
-        logs=[UserActionLogDto.from_log(log) for log in logs],
-        total=total,
-        limit=limit,
-        offset=offset
-    )
+    return {
+        "logs": [UserActionLogDto.from_log(log) for log in logs],
+        "total": total,
+        "limit": limit,
+        "skip": skip
+    }
 
 
 @user_action_log_router.get("/me", response_model=list[UserActionLogDto])

@@ -36,6 +36,7 @@ class TemplateService:
         template = Template(
             name=data.name,
             description=data.description,
+            font_id=data.font_id,
             params=data.params.model_dump(),
         )
         created_template = self.template_repository.create_template(template)
@@ -46,6 +47,7 @@ class TemplateService:
         template_id: int,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        font_id: Optional[int] = None,
         params: Optional[dict] = None,
         is_active: Optional[bool] = None,
     ) -> TemplateDto:
@@ -69,6 +71,8 @@ class TemplateService:
 
         if description is not None:
             template.description = description
+        if font_id is not None:
+            template.font_id = font_id
         if params is not None:
             template.params = params
         if is_active is not None:

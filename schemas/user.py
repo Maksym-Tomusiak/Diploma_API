@@ -15,6 +15,7 @@ class UserDto(BaseModel):
     role: UserRole  # Use actual SQLAlchemy enum (not string enum)
     is_banned: bool = False
     created_at: datetime
+    google_access_token: str | None = None  # Add Google access token for Google Picker
 
     @staticmethod
     def from_user(user: User) -> 'UserDto':
@@ -23,7 +24,8 @@ class UserDto(BaseModel):
             email=user.email,
             role=user.role,  # Pydantic automatically converts SQLAlchemy enum
             is_banned=getattr(user, "is_banned", False),
-            created_at=user.created_at
+            created_at=user.created_at,
+            google_access_token=user.google_token  # Include Google token for frontend
         )
 
     model_config = SettingsConfigDict(from_attributes=True)

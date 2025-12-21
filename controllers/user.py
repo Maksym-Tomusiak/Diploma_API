@@ -6,15 +6,25 @@ from schemas.user import UserDto
 user_router = APIRouter(prefix="/users", tags=["Users"])
 
 
-@user_router.get("", response_model=list[UserDto])
+@user_router.get("", response_model=dict)
 async def get_all_users(
     admin_user: AdminUserDependency,
     user_service: UserServiceDependency,
+    skip: int = 0,
+    limit: int = 10,
 ):
     """
-    Get all users (admin only).
+    Get all users (admin only) with pagination.
     """
-    return user_service.get_all_users()
+    users = user_service.get_all_users()
+    total = len(users)
+    paginated_users = users[skip:skip+limit]
+    return {
+        "users": paginated_users,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
 
 
 @user_router.get("/me", response_model=UserDto)

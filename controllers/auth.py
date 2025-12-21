@@ -24,14 +24,36 @@ async def login(request: Request, auth_service: AuthServiceDependency):
 @auth_router.get("/callback")
 async def auth_callback(
     request: Request,
-    code: str,
-    auth_service: AuthServiceDependency,
-    log_service: UserActionLogServiceDependency,
+    code: str = None,
+    error: str = None,
+    auth_service: AuthServiceDependency = None,
+    log_service: UserActionLogServiceDependency = None,
 ):
     """
     Handle Google OAuth callback.
     Redirects to frontend with JWT access token.
     """
+    # Handle OAuth errors from Google (like scope changes)
+    if error:
+        error_message = "Authentication failed. Please try logging in again."
+        if "scope" in error.lower():
+            # Scope change detected - user needs to revoke and re-grant access
+            error_message = (
+                "App permissions have been updated. "
+                "Please visit https://myaccount.google.com/permissions and remove 'FormatStand' access, "
+                "then try logging in again."
+            )
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/login?error={error_message}",
+            status_code=status.HTTP_302_FOUND
+        )
+    
+    if not code:
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/login?error=No authorization code received",
+            status_code=status.HTTP_302_FOUND
+        )
+    
     redirect_uri = str(request.url_for("auth_callback"))
     try:
         user, access_token, refresh_token = auth_service.process_google_callback(code, redirect_uri)

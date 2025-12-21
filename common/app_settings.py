@@ -6,6 +6,7 @@ class AppSettings(BaseSettings):
     DB_CONNECTION_STRING: str = Field(alias="DB_CONNECTION_STRING", min_length=1)
     GOOGLE_CLIENT_ID: str = Field(default="")
     GOOGLE_CLIENT_SECRET: str = Field(default="")
+    GOOGLE_FONTS_API_KEY: str = Field(default="")
     SECRET_KEY: str = Field(default="supersecretkeychangeme")
     FRONTEND_URL: str = Field(default="http://localhost:3000")
 
