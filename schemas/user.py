@@ -1,12 +1,17 @@
 from pydantic import BaseModel, EmailStr, Field
 from pydantic_settings import SettingsConfigDict
 from datetime import datetime
+from typing import Optional
 
 from models.user import User, UserRole  # Import actual SQLAlchemy enum
 
 
 class UserCreate(BaseModel):
     email: EmailStr = Field(..., description="User email address")
+
+
+class BanUserRequest(BaseModel):
+    reason: Optional[str] = Field(None, description="Reason for banning the user")
 
 
 class UserDto(BaseModel):

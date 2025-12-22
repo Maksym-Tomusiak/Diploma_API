@@ -12,6 +12,7 @@ from controllers import (
     check_result_router,
     user_action_log_router,
     font_router,
+    analytics_router,
 )
 from db import SessionLocal
 from core.font import ensure_fonts_seeded
@@ -63,6 +64,7 @@ app.include_router(template_router, prefix="/v1")
 app.include_router(check_result_router, prefix="/v1")
 app.include_router(user_action_log_router, prefix="/v1")
 app.include_router(font_router, prefix="/v1")
+app.include_router(analytics_router, prefix="/v1")
 
 
 @app.get("/")

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Request
 
 from core import UserServiceDependency, CurrentUserDependency, AdminUserDependency, UserActionLogServiceDependency
-from schemas.user import UserDto
+from schemas.user import BanUserRequest, UserDto
 
 user_router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -73,7 +73,7 @@ async def delete_user(
     """
     Delete a user (admin only).
     """
-    return user_service.delete_user(user_id)
+    return user_service.delete_user(user_id, admin_user.id)
 
 
 @user_router.post("/{user_id}/ban", response_model=UserDto)
@@ -83,14 +83,23 @@ async def ban_user(
     user_service: UserServiceDependency,
     log_service: UserActionLogServiceDependency,
     request: Request,
+    body: BanUserRequest = None,
 ):
     """Ban a user (admin only)."""
-    result = user_service.ban_user(user_id)
+    from schemas.user import BanUserRequest
+    if body is None:
+        body = BanUserRequest()
+    
+    result = user_service.ban_user(user_id, admin_user.id)
     # Log action
     log_service.log_action(
         user_id=admin_user.id,
         action_type="ADMIN_BAN_USER",
-        details={"banned_user_id": user_id, "ip_address": request.client.host if request.client else None},
+        details={
+            "banned_user_id": user_id,
+            "reason": body.reason,
+            "ip_address": request.client.host if request.client else None
+        },
     )
     return result
 
@@ -102,13 +111,22 @@ async def unban_user(
     user_service: UserServiceDependency,
     log_service: UserActionLogServiceDependency,
     request: Request,
+    body: BanUserRequest = None,
 ):
     """Unban a user (admin only)."""
+    from schemas.user import BanUserRequest
+    if body is None:
+        body = BanUserRequest()
+    
     result = user_service.unban_user(user_id)
     # Log action
     log_service.log_action(
         user_id=admin_user.id,
         action_type="ADMIN_UNBAN_USER",
-        details={"unbanned_user_id": user_id, "ip_address": request.client.host if request.client else None},
+        details={
+            "unbanned_user_id": user_id,
+            "reason": body.reason,
+            "ip_address": request.client.host if request.client else None
+        },
     )
     return result

@@ -52,7 +52,7 @@ class UserService:
             user = self.user_repository.create_user(user)
         return UserDto.from_user(user)
 
-    def delete_user(self, user_id: int) -> UserDto:
+    def delete_user(self, user_id: int, admin_id: int) -> UserDto:
         """Delete a user by ID."""
         user = self.user_repository.get_user_by_id(user_id)
         if not user:
@@ -60,10 +60,27 @@ class UserService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
+        
+        from models.user import UserRole
+        
+        # Prevent admin from deleting themselves
+        if user_id == admin_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot delete yourself",
+            )
+        
+        # Prevent admin from deleting other admins
+        if user.role == UserRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot delete another admin",
+            )
+        
         deleted_user = self.user_repository.delete_user(user)
         return UserDto.from_user(deleted_user)
 
-    def ban_user(self, user_id: int) -> UserDto:
+    def ban_user(self, user_id: int, admin_id: int) -> UserDto:
         """Ban a user (admin only)."""
         user = self.user_repository.get_user_by_id(user_id)
         if not user:
@@ -71,6 +88,23 @@ class UserService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found",
             )
+        
+        from models.user import UserRole
+        
+        # Prevent admin from banning themselves
+        if user_id == admin_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot ban yourself",
+            )
+        
+        # Prevent admin from banning other admins
+        if user.role == UserRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot ban another admin",
+            )
+        
         user.is_banned = True
         updated = self.user_repository.update_user(user)
         return UserDto.from_user(updated)
