@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, status
+from fastapi import APIRouter, Request, HTTPException, status, Response
 from fastapi.responses import RedirectResponse
 
 from common.app_settings import settings
@@ -68,11 +68,24 @@ async def auth_callback(
             }
         )
         
-        # Redirect to frontend with token
-        return RedirectResponse(
+        # Create redirect response with access token in URL
+        response = RedirectResponse(
             url=f"{settings.FRONTEND_URL}/auth/callback?token={access_token}",
             status_code=status.HTTP_302_FOUND
         )
+        
+        # Set refresh token in HTTP-only cookie for security
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=True,  # Only send over HTTPS in production
+            samesite="lax",
+            max_age=7 * 24 * 60 * 60,  # 7 days
+            path="/",
+        )
+        
+        return response
     except Exception as e:
         # Redirect to frontend with error
         return RedirectResponse(
@@ -83,16 +96,39 @@ async def auth_callback(
 
 @auth_router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
-    data: RefreshTokenRequest,
+    request: Request,
+    response: Response,
     auth_service: AuthServiceDependency,
 ):
     """
-    Refresh access token using refresh token.
-    Returns new access and refresh tokens.
+    Refresh access token using refresh token from HTTP-only cookie.
+    Returns new access token and sets new refresh token in cookie.
     """
-    new_access_token, new_refresh_token = auth_service.refresh_access_token(data.refresh_token)
+    # Get refresh token from cookie
+    refresh_token_value = request.cookies.get("refresh_token")
+    
+    if not refresh_token_value:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token not found",
+        )
+    
+    new_access_token, new_refresh_token = auth_service.refresh_access_token(refresh_token_value)
+    
+    # Set new refresh token in HTTP-only cookie
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        max_age=7 * 24 * 60 * 60,  # 7 days
+        path="/",
+    )
+    
     return TokenResponse(
         access_token=new_access_token,
+        refresh_token="",  # Don't send refresh token in response body
         token_type="bearer",
         expires_in=3600,
     )
@@ -112,11 +148,11 @@ async def logout(
     current_user: CurrentUserDependency,
     log_service: UserActionLogServiceDependency,
     request: Request,
+    response: Response,
 ):
     """
-    Logout current user.
-    Note: JWT tokens are stateless, so this just returns success.
-    Client should discard the tokens.
+    Logout current user and clear refresh token cookie.
+    Client should also discard the access token.
     """
     # Log the logout action
     log_service.log_action(
@@ -125,6 +161,15 @@ async def logout(
         details={
             "ip_address": request.client.host if request.client else None,
         }
+    )
+    
+    # Clear the refresh token cookie
+    response.delete_cookie(
+        key="refresh_token",
+        path="/",
+        httponly=True,
+        secure=True,
+        samesite="lax",
     )
     
     return {"message": "Successfully logged out"}

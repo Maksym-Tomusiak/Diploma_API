@@ -15,7 +15,7 @@ from models import User
 
 # JWT Configuration
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour
+ACCESS_TOKEN_EXPIRE_MINUTES = 1  # 1 hour
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # Google OAuth Configuration
