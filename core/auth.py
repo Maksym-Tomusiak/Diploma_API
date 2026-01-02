@@ -158,6 +158,40 @@ class AuthService:
 
         return new_access_token, new_refresh_token
 
+    def refresh_google_token(self, user: User) -> str:
+        """
+        Refresh the user's Google access token using their stored refresh token.
+        Returns the new Google access token.
+        """
+        if not user.google_refresh_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="No Google refresh token available. Please log in again.",
+            )
+        
+        try:
+            credentials = Credentials(
+                token=user.google_token,
+                refresh_token=user.google_refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=settings.GOOGLE_CLIENT_ID,
+                client_secret=settings.GOOGLE_CLIENT_SECRET,
+            )
+            
+            from google.auth.transport.requests import Request
+            credentials.refresh(Request())
+            
+            # Update user's Google token in database
+            user.google_token = credentials.token
+            self.user_repository.update_user(user)
+            
+            return credentials.token
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Failed to refresh Google token: {str(e)}. Please log in again.",
+            )
+
     def get_current_user_from_token(self, token: str) -> User:
         """Get the current user from a JWT token."""
         payload = self.verify_token(token, token_type="access")

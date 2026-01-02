@@ -11,6 +11,8 @@ from core.document import DocumentService, DocumentServiceDependency
 from core.template import TemplateService, TemplateServiceDependency
 from core.check_result import CheckResultService, CheckResultServiceDependency
 from core.user_action_log import UserActionLogService, UserActionLogServiceDependency
+from core.google_docs import GoogleDocsService, GoogleDocsServiceDependency
+from core.format_checker import FormatCheckerService, FormatCheckerServiceDependency
 
 __all__ = [
     # Auth
@@ -31,4 +33,8 @@ __all__ = [
     "CheckResultServiceDependency",
     "UserActionLogService",
     "UserActionLogServiceDependency",
+    "GoogleDocsService",
+    "GoogleDocsServiceDependency",
+    "FormatCheckerService",
+    "FormatCheckerServiceDependency",
 ]

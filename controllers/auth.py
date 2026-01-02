@@ -173,3 +173,19 @@ async def logout(
     )
     
     return {"message": "Successfully logged out"}
+
+
+@auth_router.post("/refresh-google-token", response_model=dict)
+async def refresh_google_token(
+    current_user: CurrentUserDependency,
+    auth_service: AuthServiceDependency,
+):
+    """
+    Refresh the user's Google access token using their stored Google refresh token.
+    This is useful when the Google token expires but the app session is still valid.
+    """
+    new_google_token = auth_service.refresh_google_token(current_user)
+    return {
+        "google_access_token": new_google_token,
+        "message": "Google token refreshed successfully"
+    }

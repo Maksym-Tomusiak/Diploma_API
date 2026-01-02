@@ -1,7 +1,7 @@
 from typing import Annotated, Optional
 
 from fastapi import Depends
-from sqlalchemy import select
+from sqlalchemy import select, desc
 
 from db import SessionDep
 from models import CheckResult
@@ -15,7 +15,7 @@ class CheckResultRepository:
         return self.session.get(CheckResult, check_result_id)
 
     def get_check_results_by_document_id(self, document_id: int) -> list[CheckResult]:
-        query = select(CheckResult).where(CheckResult.document_id == document_id)
+        query = select(CheckResult).where(CheckResult.document_id == document_id).order_by(desc(CheckResult.created_at))
         return list(self.session.scalars(query).all())
 
     def create_check_result(self, check_result: CheckResult) -> CheckResult:

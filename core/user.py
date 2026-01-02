@@ -121,5 +121,12 @@ class UserService:
         updated = self.user_repository.update_user(user)
         return UserDto.from_user(updated)
 
+    def update_google_token(self, user_id: int, new_token: str) -> None:
+        """Update user's Google access token (called when token is refreshed)."""
+        user = self.user_repository.get_user_by_id(user_id)
+        if user:
+            user.google_token = new_token
+            self.user_repository.update_user(user)
+
 
 UserServiceDependency = Annotated[UserService, Depends(UserService)]

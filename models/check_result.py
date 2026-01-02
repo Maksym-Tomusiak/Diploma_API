@@ -11,7 +11,12 @@ class CheckResult(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
     document_id: Mapped[int] = mapped_column(ForeignKey('documents.id', ondelete='CASCADE'), nullable=False, index=True)
-    template_id: Mapped[int] = mapped_column(ForeignKey('templates.id'), nullable=False, index=True)
+    # template_id is nullable when using custom params
+    template_id: Mapped[Optional[int]] = mapped_column(ForeignKey('templates.id'), nullable=True, index=True)
+    # custom_params stores user-provided formatting rules when not using a template
+    custom_params: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # font_family for custom mode (template has its own font_id)
+    custom_font_family: Mapped[Optional[str]] = mapped_column(nullable=True)
     passed: Mapped[bool] = mapped_column(nullable=False)
     overall_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # 0.0-1.0
     issues_count: Mapped[int] = mapped_column(default=0)

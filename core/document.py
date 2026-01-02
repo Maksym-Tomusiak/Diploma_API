@@ -5,6 +5,7 @@ from fastapi import Depends, HTTPException, status
 from crud import DocumentRepositoryDependency
 from models import Document, User
 from models.document import DocumentStatus
+from models.user import UserRole
 from schemas.document import DocumentCreate, DocumentDto
 
 
@@ -12,11 +13,25 @@ class DocumentService:
     def __init__(self, document_repository: DocumentRepositoryDependency):
         self.document_repository = document_repository
 
-    def get_document(self, document_id: int, user_id: int) -> Optional[DocumentDto]:
-        """Get document by ID with ownership check."""
+    def get_document(self, document_id: int, user_id: int, is_admin: bool = False) -> Optional[DocumentDto]:
+        """Get document by ID with ownership check. Admins can access any document."""
         document = self.document_repository.get_document_by_id(document_id)
         if not document:
             return None
+        # Allow access if user owns the document OR is an admin
+        if document.user_id != user_id and not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied to this document",
+            )
+        return DocumentDto.from_document(document)
+
+    def get_document_by_google_id(self, google_doc_id: str, user_id: int) -> Optional[DocumentDto]:
+        """Get document by Google Doc ID with ownership check."""
+        document = self.document_repository.get_document_by_google_doc_id(google_doc_id)
+        if not document:
+            return None
+        # Check ownership
         if document.user_id != user_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -42,6 +57,7 @@ class DocumentService:
         document = Document(
             user_id=user.id,
             google_doc_id=data.google_doc_id,
+            title=data.title,
             status=DocumentStatus.PENDING,
         )
         created_document = self.document_repository.create_document(document)

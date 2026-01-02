@@ -53,14 +53,28 @@ class CheckResultService:
     def create_check_result(
         self,
         document_id: int,
-        template_id: int,
         passed: bool,
         overall_score: Optional[float],
         issues: list[dict],
         processing_time_ms: int,
         user_id: int,
+        template_id: Optional[int] = None,
+        custom_params: Optional[dict] = None,
+        custom_font_family: Optional[str] = None,
     ) -> CheckResultDto:
-        """Create a new check result for a document."""
+        """Create a new check result for a document.
+        
+        Args:
+            document_id: ID of the document being checked
+            passed: Whether the check passed
+            overall_score: Score from 0.0 to 1.0
+            issues: List of formatting issues found
+            processing_time_ms: Time taken for the check
+            user_id: ID of the user performing the check
+            template_id: ID of template used (optional, None if custom params)
+            custom_params: Custom formatting params used (optional)
+            custom_font_family: Font family for custom mode (optional)
+        """
         # Verify user owns the document
         document = self.document_repository.get_document_by_id(document_id)
         if not document:
@@ -77,6 +91,8 @@ class CheckResultService:
         check_result = CheckResult(
             document_id=document_id,
             template_id=template_id,
+            custom_params=custom_params,
+            custom_font_family=custom_font_family,
             passed=passed,
             overall_score=overall_score,
             issues_count=len(issues),
