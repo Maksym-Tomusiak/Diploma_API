@@ -313,6 +313,16 @@ class GoogleDocsService:
         # Get page number start from document style
         page_number_start = doc_style.get("pageNumberStart", 1)
         
+        # When "different first page" is enabled, Google Docs may report the page number
+        # that would appear on page 1, even though page 1 has no number.
+        # So if first_page_different is true and has_page_numbers is true,
+        # the actual first numbered page (page 2) shows the value (page_number_start + 1)
+        # We need to adjust this to reflect what number actually appears on the first numbered page.
+        if first_page_different and has_page_numbers:
+            # The first numbered page (page 2) will show page_number_start + 1
+            # So we store this adjusted value
+            page_number_start = page_number_start + 1
+        
         return DocumentProperties(
             title=title,
             page_width_pt=page_width_pt,

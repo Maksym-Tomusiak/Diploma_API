@@ -230,15 +230,39 @@ class FormatCheckerService:
                     actual="No page numbers found",
                 ))
             else:
-                # Check start page
-                if doc_props.page_number_start != params.page_numbering.start_page:
-                    issues.append(FormatIssue(
-                        type="page_number_start_mismatch",
-                        severity="low",
-                        details=f"Page numbering starts at {doc_props.page_number_start}, expected {params.page_numbering.start_page}",
-                        expected=str(params.page_numbering.start_page),
-                        actual=str(doc_props.page_number_start),
-                    ))
+                # When skip_first_page is enabled, the page numbering behavior is special:
+                # - If first_page_different is true, page 1 has no number
+                # - Page 2 (first numbered page) shows the number from page_number_start
+                # - So if user wants "start from page 2", they need page_number_start = 2
+                # However, some docs might have page_number_start = 1 even with different first page,
+                # which means page 2 shows "1". We need to check what the user expects.
+                
+                expected_start = params.page_numbering.start_page
+                actual_start = doc_props.page_number_start
+                
+                # If skip_first_page is enabled and document has different first page,
+                # the page_number_start tells us what number appears on page 2
+                if params.skip_first_page and doc_props.first_page_different:
+                    # Page 2 shows page_number_start value
+                    # User expects page 2 to show start_page value
+                    if actual_start != expected_start:
+                        issues.append(FormatIssue(
+                            type="page_number_start_mismatch",
+                            severity="low",
+                            details=f"First numbered page (page 2) shows number {actual_start}, but expected {expected_start}. In Google Docs, go to Insert > Page numbers > More options, and set 'Start at' to {expected_start}",
+                            expected=str(expected_start),
+                            actual=str(actual_start),
+                        ))
+                elif not params.skip_first_page:
+                    # Normal case: page 1 shows page_number_start value
+                    if actual_start != expected_start:
+                        issues.append(FormatIssue(
+                            type="page_number_start_mismatch",
+                            severity="low",
+                            details=f"Page numbering starts at {actual_start}, expected {expected_start}",
+                            expected=str(expected_start),
+                            actual=str(actual_start),
+                        ))
         
         # Check skip first page setting
         if params.skip_first_page:
