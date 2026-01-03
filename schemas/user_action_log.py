@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 
@@ -11,13 +12,13 @@ class UserActionLogBase(BaseModel):
 
 class UserActionLogCreate(UserActionLogBase):
     """Schema for creating a user action log."""
-    user_id: int
+    user_id: UUID
 
 
 class UserActionLogDto(UserActionLogBase):
     """Schema for returning user action log data."""
     id: int
-    user_id: int
+    user_id: UUID
     created_at: datetime
     
     # User info for admin view

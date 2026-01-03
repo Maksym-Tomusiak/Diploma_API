@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 from typing import Optional
 from datetime import datetime
+from uuid import UUID
 
 from models.document import Document, DocumentStatus  # Import actual enum
 
@@ -13,7 +14,7 @@ class DocumentCreate(BaseModel):
 
 
 class DocumentDto(BaseModel):
-    id: int = Field(..., gt=0)
+    id: UUID
     google_doc_id: str
     title: Optional[str]
     status: DocumentStatus  # Use actual SQLAlchemy enum

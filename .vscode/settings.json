@@ -8,5 +8,8 @@
       "name": "diploma_db",
       "connectString": "postgresql+psycopg2://postgres:postgres@localhost:5432/diploma-db"
     }
-  ]
+  ],
+  "python-envs.defaultEnvManager": "ms-python.python:conda",
+  "python-envs.defaultPackageManager": "ms-python.python:conda",
+  "python-envs.pythonProjects": []
 }

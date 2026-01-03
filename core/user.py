@@ -1,4 +1,5 @@
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 
@@ -11,7 +12,7 @@ class UserService:
     def __init__(self, user_repository: UserRepositoryDependency):
         self.user_repository = user_repository
 
-    def get_user(self, user_id: int) -> Optional[UserDto]:
+    def get_user(self, user_id: UUID) -> Optional[UserDto]:
         """Get user by ID."""
         user = self.user_repository.get_user_by_id(user_id)
         if not user:
@@ -52,7 +53,7 @@ class UserService:
             user = self.user_repository.create_user(user)
         return UserDto.from_user(user)
 
-    def delete_user(self, user_id: int, admin_id: int) -> UserDto:
+    def delete_user(self, user_id: UUID, admin_id: UUID) -> UserDto:
         """Delete a user by ID."""
         user = self.user_repository.get_user_by_id(user_id)
         if not user:
@@ -80,7 +81,7 @@ class UserService:
         deleted_user = self.user_repository.delete_user(user)
         return UserDto.from_user(deleted_user)
 
-    def ban_user(self, user_id: int, admin_id: int) -> UserDto:
+    def ban_user(self, user_id: UUID, admin_id: UUID) -> UserDto:
         """Ban a user (admin only)."""
         user = self.user_repository.get_user_by_id(user_id)
         if not user:
@@ -109,7 +110,7 @@ class UserService:
         updated = self.user_repository.update_user(user)
         return UserDto.from_user(updated)
 
-    def unban_user(self, user_id: int) -> UserDto:
+    def unban_user(self, user_id: UUID) -> UserDto:
         """Unban a user (admin only)."""
         user = self.user_repository.get_user_by_id(user_id)
         if not user:
@@ -121,7 +122,7 @@ class UserService:
         updated = self.user_repository.update_user(user)
         return UserDto.from_user(updated)
 
-    def update_google_token(self, user_id: int, new_token: str) -> None:
+    def update_google_token(self, user_id: UUID, new_token: str) -> None:
         """Update user's Google access token (called when token is refreshed)."""
         user = self.user_repository.get_user_by_id(user_id)
         if user:

@@ -1,4 +1,5 @@
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy import select, desc
@@ -11,10 +12,10 @@ class CheckResultRepository:
     def __init__(self, session: SessionDep):
         self.session = session
 
-    def get_check_result_by_id(self, check_result_id: int) -> Optional[CheckResult]:
+    def get_check_result_by_id(self, check_result_id: UUID) -> Optional[CheckResult]:
         return self.session.get(CheckResult, check_result_id)
 
-    def get_check_results_by_document_id(self, document_id: int) -> list[CheckResult]:
+    def get_check_results_by_document_id(self, document_id: UUID) -> list[CheckResult]:
         query = select(CheckResult).where(CheckResult.document_id == document_id).order_by(desc(CheckResult.created_at))
         return list(self.session.scalars(query).all())
 

@@ -1,5 +1,6 @@
 from typing import Annotated, Optional, List
 from datetime import datetime, timedelta
+from uuid import UUID
 from fastapi import Depends
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
@@ -14,7 +15,7 @@ class UserActionLogRepository:
 
     def create_log(
         self,
-        user_id: int,
+        user_id: UUID,
         action_type: str,
         details: Optional[dict] = None
     ) -> UserActionLog:
@@ -32,7 +33,7 @@ class UserActionLogRepository:
 
     def get_logs_by_user(
         self,
-        user_id: int,
+        user_id: UUID,
         limit: int = 100,
         offset: int = 0
     ) -> List[UserActionLog]:
@@ -51,7 +52,7 @@ class UserActionLogRepository:
         limit: int = 100,
         offset: int = 0,
         action_type: Optional[str] = None,
-        user_id: Optional[int] = None,
+        user_id: Optional[UUID] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
     ) -> tuple[List[UserActionLog], int]:

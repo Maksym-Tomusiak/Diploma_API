@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Request
+from uuid import UUID
 
 from core import (
     DocumentServiceDependency,
@@ -48,7 +49,7 @@ async def get_document_by_google_id(
 
 @document_router.get("/{document_id}", response_model=DocumentDto)
 async def get_document(
-    document_id: int,
+    document_id: UUID,
     current_user: CurrentUserDependency,
     document_service: DocumentServiceDependency,
 ):
@@ -90,7 +91,7 @@ async def create_document(
         user_id=current_user.id,
         action_type="DOCUMENT_CREATE",
         details={
-            "document_id": document.id,
+            "document_id": str(document.id),
             "google_doc_id": data.google_doc_id,
             "title": data.title,
             "ip_address": request.client.host if request.client else None,
@@ -102,7 +103,7 @@ async def create_document(
 
 @document_router.delete("/{document_id}", response_model=DocumentDto)
 async def delete_document(
-    document_id: int,
+    document_id: UUID,
     current_user: CurrentUserDependency,
     document_service: DocumentServiceDependency,
     log_service: UserActionLogServiceDependency,
@@ -126,7 +127,7 @@ async def delete_document(
         user_id=current_user.id,
         action_type="DOCUMENT_DELETE",
         details={
-            "document_id": document_id,
+            "document_id": str(document_id),
             "ip_address": request.client.host if request.client else None,
         }
     )
@@ -136,7 +137,7 @@ async def delete_document(
 
 @document_router.post("/{document_id}/check", response_model=CheckResultDto)
 async def check_document(
-    document_id: int,
+    document_id: UUID,
     data: CheckDocumentRequest,
     current_user: CurrentUserDependency,
     document_service: DocumentServiceDependency,
@@ -235,7 +236,7 @@ async def check_document(
         user_id=current_user.id,
         action_type="DOCUMENT_CHECK",
         details={
-            "document_id": document_id,
+            "document_id": str(document_id),
             "template_id": template_id,
             "custom_params": custom_params_dict is not None,
             "passed": check_result.passed,

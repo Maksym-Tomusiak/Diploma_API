@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from pydantic_settings import SettingsConfigDict
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from models.user import User, UserRole  # Import actual SQLAlchemy enum
 
@@ -15,7 +16,7 @@ class BanUserRequest(BaseModel):
 
 
 class UserDto(BaseModel):
-    id: int = Field(..., gt=0)
+    id: UUID
     email: EmailStr
     role: UserRole  # Use actual SQLAlchemy enum (not string enum)
     is_banned: bool = False

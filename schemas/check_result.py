@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import SettingsConfigDict
 from typing import List, Optional
 from datetime import datetime
+from uuid import UUID
 
 from models.check_result import CheckResult
 from schemas.template import TemplateParams
@@ -38,8 +39,8 @@ class CheckDocumentRequest(BaseModel):
 
 
 class CheckResultDto(BaseModel):
-    id: int = Field(..., gt=0)
-    document_id: int = Field(..., gt=0)
+    id: UUID
+    document_id: UUID
     template_id: Optional[int] = Field(None, gt=0)  # Nullable when using custom params
     custom_params: Optional[dict] = None  # Stored custom params if used
     custom_font_family: Optional[str] = None  # Font family for custom mode

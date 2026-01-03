@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import List, Optional
+import uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import ForeignKey, DateTime, Boolean, JSON, Float
+from sqlalchemy.dialects.postgresql import UUID
 
 from models.base import Base
 
@@ -9,8 +11,8 @@ from models.base import Base
 class CheckResult(Base):
     __tablename__ = 'check_results'
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
-    document_id: Mapped[int] = mapped_column(ForeignKey('documents.id', ondelete='CASCADE'), nullable=False, index=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('documents.id', ondelete='CASCADE'), nullable=False, index=True)
     # template_id is nullable when using custom params
     template_id: Mapped[Optional[int]] = mapped_column(ForeignKey('templates.id'), nullable=True, index=True)
     # custom_params stores user-provided formatting rules when not using a template

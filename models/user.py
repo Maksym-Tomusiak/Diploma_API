@@ -1,8 +1,10 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+import uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, DateTime, Text, Enum as SQLEnum, Boolean
+from sqlalchemy.dialects.postgresql import UUID
 
 from models.base import Base
 
@@ -15,10 +17,11 @@ class UserRole(str, Enum):
 class User(Base):
     __tablename__ = 'users'
 
-    id: Mapped[int] = mapped_column(
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
         primary_key=True,
         index=True,
-        autoincrement=True
+        default=uuid.uuid4
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     google_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

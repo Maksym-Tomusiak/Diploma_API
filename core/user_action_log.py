@@ -1,5 +1,6 @@
 from typing import Annotated, Optional, List
 from datetime import datetime
+from uuid import UUID
 from fastapi import Depends
 
 from crud import UserActionLogRepositoryDependency
@@ -12,7 +13,7 @@ class UserActionLogService:
 
     def log_action(
         self,
-        user_id: int,
+        user_id: UUID,
         action_type: str,
         details: Optional[dict] = None
     ) -> UserActionLog:
@@ -25,7 +26,7 @@ class UserActionLogService:
 
     def get_user_logs(
         self,
-        user_id: int,
+        user_id: UUID,
         limit: int = 100,
         offset: int = 0
     ) -> List[UserActionLog]:
@@ -37,7 +38,7 @@ class UserActionLogService:
         limit: int = 100,
         offset: int = 0,
         action_type: Optional[str] = None,
-        user_id: Optional[int] = None,
+        user_id: Optional[UUID] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
     ) -> tuple[List[UserActionLog], int]:

@@ -1,8 +1,9 @@
 from datetime import datetime
 from typing import Optional
+import uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, DateTime, ForeignKey, Integer
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from models.base import Base
 
@@ -16,9 +17,9 @@ class UserActionLog(Base):
         index=True,
         autoincrement=True
     )
-    user_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey('users.id'),
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey('users.id', ondelete='CASCADE'),
         nullable=False,
         index=True
     )

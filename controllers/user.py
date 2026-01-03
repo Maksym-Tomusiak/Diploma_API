@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Request
+from uuid import UUID
 
 from core import UserServiceDependency, CurrentUserDependency, AdminUserDependency, UserActionLogServiceDependency
 from schemas.user import BanUserRequest, UserDto
@@ -37,7 +38,7 @@ async def get_current_user(current_user: CurrentUserDependency):
 
 @user_router.get("/{user_id}", response_model=UserDto)
 async def get_user(
-    user_id: int,
+    user_id: UUID,
     current_user: CurrentUserDependency,
     user_service: UserServiceDependency,
 ):
@@ -66,7 +67,7 @@ async def get_user(
 
 @user_router.delete("/{user_id}", response_model=UserDto)
 async def delete_user(
-    user_id: int,
+    user_id: UUID,
     admin_user: AdminUserDependency,
     user_service: UserServiceDependency,
 ):
@@ -78,7 +79,7 @@ async def delete_user(
 
 @user_router.post("/{user_id}/ban", response_model=UserDto)
 async def ban_user(
-    user_id: int,
+    user_id: UUID,
     admin_user: AdminUserDependency,
     user_service: UserServiceDependency,
     log_service: UserActionLogServiceDependency,
@@ -96,7 +97,7 @@ async def ban_user(
         user_id=admin_user.id,
         action_type="ADMIN_BAN_USER",
         details={
-            "banned_user_id": user_id,
+            "banned_user_id": str(user_id),
             "reason": body.reason,
             "ip_address": request.client.host if request.client else None
         },
@@ -106,7 +107,7 @@ async def ban_user(
 
 @user_router.post("/{user_id}/unban", response_model=UserDto)
 async def unban_user(
-    user_id: int,
+    user_id: UUID,
     admin_user: AdminUserDependency,
     user_service: UserServiceDependency,
     log_service: UserActionLogServiceDependency,
@@ -124,7 +125,7 @@ async def unban_user(
         user_id=admin_user.id,
         action_type="ADMIN_UNBAN_USER",
         details={
-            "unbanned_user_id": user_id,
+            "unbanned_user_id": str(user_id),
             "reason": body.reason,
             "ip_address": request.client.host if request.client else None
         },

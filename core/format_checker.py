@@ -47,8 +47,8 @@ class FormatCheckerService:
     """Service for checking document formatting against templates or custom parameters."""
 
     # Tolerance values for comparison
-    FONT_SIZE_TOLERANCE = 0.5  # points
-    MARGIN_TOLERANCE = 2.0  # mm
+    FONT_SIZE_TOLERANCE = 0.1  # points
+    MARGIN_TOLERANCE = 0.5  # mm
     LINE_SPACING_TOLERANCE = 0.1
 
     def __init__(self, google_docs_service: GoogleDocsServiceDependency):
@@ -289,7 +289,7 @@ class FormatCheckerService:
                 score -= 0.03
         
         score = max(0.0, min(1.0, score))
-        passed = score >= 0.7 and not any(i.severity == "high" for i in issues)
+        passed = score >= 0.98 and not any(i.severity == "high" for i in issues)
         
         return CheckResult(
             passed=passed,

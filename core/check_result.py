@@ -1,4 +1,5 @@
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 
@@ -16,7 +17,7 @@ class CheckResultService:
         self.check_result_repository = check_result_repository
         self.document_repository = document_repository
 
-    def get_check_result(self, check_result_id: int, user_id: int) -> Optional[CheckResultDto]:
+    def get_check_result(self, check_result_id: UUID, user_id: UUID) -> Optional[CheckResultDto]:
         """Get check result by ID with ownership validation."""
         check_result = self.check_result_repository.get_check_result_by_id(check_result_id)
         if not check_result:
@@ -32,7 +33,7 @@ class CheckResultService:
 
         return CheckResultDto.from_check_result(check_result)
 
-    def get_document_check_results(self, document_id: int, user_id: int) -> list[CheckResultDto]:
+    def get_document_check_results(self, document_id: UUID, user_id: UUID) -> list[CheckResultDto]:
         """Get all check results for a document with ownership validation."""
         # Verify user owns the document
         document = self.document_repository.get_document_by_id(document_id)
@@ -52,12 +53,12 @@ class CheckResultService:
 
     def create_check_result(
         self,
-        document_id: int,
+        document_id: UUID,
         passed: bool,
         overall_score: Optional[float],
         issues: list[dict],
         processing_time_ms: int,
-        user_id: int,
+        user_id: UUID,
         template_id: Optional[int] = None,
         custom_params: Optional[dict] = None,
         custom_font_family: Optional[str] = None,

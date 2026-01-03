@@ -1,4 +1,5 @@
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy import select
@@ -12,7 +13,7 @@ class UserRepository:
     def __init__(self, session: SessionDep):
         self.session = session
 
-    def get_user_by_id(self, user_id: int) -> Optional[User]:
+    def get_user_by_id(self, user_id: UUID) -> Optional[User]:
         return self.session.get(User, user_id)
 
     def get_user_by_email(self, email: str) -> Optional[User]:

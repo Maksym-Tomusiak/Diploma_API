@@ -1,4 +1,5 @@
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 
@@ -13,7 +14,7 @@ class DocumentService:
     def __init__(self, document_repository: DocumentRepositoryDependency):
         self.document_repository = document_repository
 
-    def get_document(self, document_id: int, user_id: int, is_admin: bool = False) -> Optional[DocumentDto]:
+    def get_document(self, document_id: UUID, user_id: UUID, is_admin: bool = False) -> Optional[DocumentDto]:
         """Get document by ID with ownership check. Admins can access any document."""
         document = self.document_repository.get_document_by_id(document_id)
         if not document:
@@ -26,7 +27,7 @@ class DocumentService:
             )
         return DocumentDto.from_document(document)
 
-    def get_document_by_google_id(self, google_doc_id: str, user_id: int) -> Optional[DocumentDto]:
+    def get_document_by_google_id(self, google_doc_id: str, user_id: UUID) -> Optional[DocumentDto]:
         """Get document by Google Doc ID with ownership check."""
         document = self.document_repository.get_document_by_google_doc_id(google_doc_id)
         if not document:
@@ -39,7 +40,7 @@ class DocumentService:
             )
         return DocumentDto.from_document(document)
 
-    def get_user_documents(self, user_id: int) -> list[DocumentDto]:
+    def get_user_documents(self, user_id: UUID) -> list[DocumentDto]:
         """Get all documents for a user."""
         documents = self.document_repository.get_documents_by_user_id(user_id)
         return [DocumentDto.from_document(doc) for doc in documents]
@@ -63,7 +64,7 @@ class DocumentService:
         created_document = self.document_repository.create_document(document)
         return DocumentDto.from_document(created_document)
 
-    def update_document_status(self, document_id: int, user_id: int, new_status: DocumentStatus) -> DocumentDto:
+    def update_document_status(self, document_id: UUID, user_id: UUID, new_status: DocumentStatus) -> DocumentDto:
         """Update document status."""
         document = self.document_repository.get_document_by_id(document_id)
         if not document:
@@ -81,7 +82,7 @@ class DocumentService:
         updated_document = self.document_repository.update_document(document)
         return DocumentDto.from_document(updated_document)
 
-    def delete_document(self, document_id: int, user_id: int) -> DocumentDto:
+    def delete_document(self, document_id: UUID, user_id: UUID) -> DocumentDto:
         """Delete a document with ownership check."""
         document = self.document_repository.get_document_by_id(document_id)
         if not document:

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Request
+from uuid import UUID
 
 from core import CheckResultServiceDependency, CurrentUserDependency, UserActionLogServiceDependency
 from schemas.check_result import CheckResultDto
@@ -8,7 +9,7 @@ check_result_router = APIRouter(prefix="/check-results", tags=["Check Results"])
 
 @check_result_router.get("/{check_result_id}", response_model=CheckResultDto)
 async def get_check_result(
-    check_result_id: int,
+    check_result_id: UUID,
     current_user: CurrentUserDependency,
     check_result_service: CheckResultServiceDependency,
     log_service: UserActionLogServiceDependency,
@@ -30,8 +31,8 @@ async def get_check_result(
         user_id=current_user.id,
         action_type="CHECK_RESULT_VIEW",
         details={
-            "check_result_id": check_result_id,
-            "document_id": check_result.document_id,
+            "check_result_id": str(check_result_id),
+            "document_id": str(check_result.document_id),
             "ip_address": request.client.host if request.client else None,
         }
     )
@@ -41,7 +42,7 @@ async def get_check_result(
 
 @check_result_router.get("/document/{document_id}", response_model=list[CheckResultDto])
 async def get_document_check_results(
-    document_id: int,
+    document_id: UUID,
     current_user: CurrentUserDependency,
     check_result_service: CheckResultServiceDependency,
 ):

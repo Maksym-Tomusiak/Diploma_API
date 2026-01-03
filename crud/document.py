@@ -1,4 +1,5 @@
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy import select
@@ -11,10 +12,10 @@ class DocumentRepository:
     def __init__(self, session: SessionDep):
         self.session = session
 
-    def get_document_by_id(self, document_id: int) -> Optional[Document]:
+    def get_document_by_id(self, document_id: UUID) -> Optional[Document]:
         return self.session.get(Document, document_id)
 
-    def get_documents_by_user_id(self, user_id: int) -> list[Document]:
+    def get_documents_by_user_id(self, user_id: UUID) -> list[Document]:
         query = select(Document).where(Document.user_id == user_id)
         return list(self.session.scalars(query).all())
 

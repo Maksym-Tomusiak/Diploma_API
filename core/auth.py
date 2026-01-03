@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Annotated, Optional
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -144,7 +145,7 @@ class AuthService:
                 detail="Invalid refresh token",
             )
 
-        user = self.user_repository.get_user_by_id(int(user_id))
+        user = self.user_repository.get_user_by_id(UUID(user_id))
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -203,7 +204,7 @@ class AuthService:
                 detail="Invalid token payload",
             )
 
-        user = self.user_repository.get_user_by_id(int(user_id))
+        user = self.user_repository.get_user_by_id(UUID(user_id))
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

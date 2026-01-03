@@ -1,5 +1,6 @@
 from typing import Optional
 from datetime import datetime
+from uuid import UUID
 from fastapi import APIRouter, Query, HTTPException, status
 
 from core import (
@@ -19,7 +20,7 @@ def get_all_logs(
     limit: int = Query(10, ge=1, le=1000, description="Number of logs to return"),
     skip: int = Query(0, ge=0, description="Number of logs to skip"),
     action_type: Optional[str] = Query(None, description="Filter by action type"),
-    user_id: Optional[int] = Query(None, description="Filter by user ID"),
+    user_id: Optional[UUID] = Query(None, description="Filter by user ID"),
     start_date: Optional[datetime] = Query(None, description="Filter by start date (ISO format)"),
     end_date: Optional[datetime] = Query(None, description="Filter by end date (ISO format)"),
 ) -> dict:
