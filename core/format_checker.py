@@ -189,14 +189,23 @@ class FormatCheckerService:
         # Check line spacing for paragraphs (skip first page if requested)
         if doc_props.paragraph_line_spacings:
             wrong_spacing_values: dict[float, int] = {}  # spacing -> count of paragraphs
+            checked_count = 0
+            skipped_count = 0
+            
             for pls in doc_props.paragraph_line_spacings:
                 # Skip first page paragraphs if requested
                 if params.skip_first_page and pls.is_on_first_page:
+                    skipped_count += 1
                     continue
                 
+                checked_count += 1
                 spacing_diff = abs(pls.line_spacing - params.line_spacing)
                 if spacing_diff > self.LINE_SPACING_TOLERANCE:
                     wrong_spacing_values[pls.line_spacing] = wrong_spacing_values.get(pls.line_spacing, 0) + 1
+            
+            print(f"DEBUG: Line spacing check - Total paragraphs: {len(doc_props.paragraph_line_spacings)}, Checked: {checked_count}, Skipped (first page): {skipped_count}")
+            print(f"DEBUG: Expected line spacing: {params.line_spacing}, Tolerance: {self.LINE_SPACING_TOLERANCE}")
+            print(f"DEBUG: Wrong spacing found: {wrong_spacing_values}")
             
             for actual_spacing, count in wrong_spacing_values.items():
                 issues.append(FormatIssue(

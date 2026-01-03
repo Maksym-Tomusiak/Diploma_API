@@ -1,6 +1,7 @@
 """
 Google Docs Service - Fetches document properties from Google Docs API.
 """
+import math
 from typing import Annotated, Optional, Callable
 from dataclasses import dataclass, field
 
@@ -193,6 +194,9 @@ class GoogleDocsService:
         margin_left = doc_style.get("marginLeft", {}).get("magnitude", 72)
         margin_right = doc_style.get("marginRight", {}).get("magnitude", 72)
         
+        # Calculate usable content width for line-wrap estimation
+        content_width_pt = page_width_pt - margin_left - margin_right
+        
         # First page header/footer different
         first_page_different = doc_style.get("useFirstPageHeaderFooter", False)
         
@@ -219,16 +223,97 @@ class GoogleDocsService:
         # Track first page break for skip_first_page functionality
         first_page_break_index: Optional[int] = None
         
-        # Scan body content
+        # Scan body content first to find manual page break
         body = document.get("body", {})
         content = body.get("content", [])
         
+        # First pass: find manual page break
+        temp_para_index = 0
+        for element in content:
+            if "pageBreak" in element and first_page_break_index is None:
+                first_page_break_index = temp_para_index
+            if "paragraph" in element:
+                temp_para_index += 1
+        
+        # If no manual page break found, estimate first page end based on content height
+        estimated_first_page_end: Optional[int] = None
+        if first_page_break_index is None:
+            # Calculate available height on first page (page height minus margins)
+            # Reduce by 12% as safety margin for headers, footers, and spacing variations
+            available_height_pt = (page_height_pt - margin_top - margin_bottom) * 0.87
+            
+            # Estimate paragraph heights and accumulate until we exceed first page
+            cumulative_height_pt = 0.0
+            temp_para_index = 0
+            
+            for element in content:
+                if "paragraph" in element:
+                    paragraph = element["paragraph"]
+                    para_style = paragraph.get("paragraphStyle", {})
+                    
+                    # Get line spacing (default 1.15)
+                    line_spacing = para_style.get("lineSpacing", 115) / 100
+                    
+                    # Get spacing before and after paragraph (in points)
+                    spacing_before = para_style.get("spacingBefore", {}).get("magnitude", 0)
+                    spacing_after = para_style.get("spacingAfter", {}).get("magnitude", 0)
+                    
+                    # Get paragraph's named style to estimate font size
+                    para_named_style_type = para_style.get("namedStyleType", "NORMAL_TEXT")
+                    para_style_defaults = named_styles_map.get(para_named_style_type, {})
+                    is_heading = para_named_style_type.startswith("HEADING_")
+                    
+                    # Estimate font size for this paragraph
+                    estimated_font_size = para_style_defaults.get("font_size") or fallback_size or 11
+                    
+                    # Count lines in paragraph (rough estimate based on content)
+                    para_text_length = 0
+                    for elem in paragraph.get("elements", []):
+                        if "textRun" in elem:
+                            content_text = elem["textRun"].get("content", "")
+                            para_text_length += len(content_text)
+                    
+                    # --- IMPROVED ESTIMATION LOGIC ---
+                    
+                    # Calculate avg char width (0.6 is a standard ratio for variable width fonts)
+                    avg_char_width_pt = estimated_font_size * 0.62
+                    
+                    # Calculate how many chars fit on one line dynamically
+                    chars_per_line = max(1, content_width_pt / avg_char_width_pt)
+                    
+                    # Use ceil to account for wrapping (e.g. 61 chars in 60 limit = 2 lines)
+                    if para_text_length > 0:
+                        estimated_lines = math.ceil(para_text_length / chars_per_line)
+                    else:
+                        estimated_lines = 1  # Empty line still has height
+                    
+                    # ---------------------------------
+                    font_vertical_metrics = 1.2
+                    # Calculate paragraph height: 
+                    # - Base line height = font_size * line_spacing * number_of_lines
+                    # - Add spacing before and after from paragraph style
+                    # - Add extra spacing for headings (they typically have more space)
+                    # - Add a buffer per paragraph (3pt) to account for rendering variations
+                    base_line_height = (estimated_font_size * font_vertical_metrics) * line_spacing * estimated_lines
+                    heading_extra_space = estimated_font_size if is_heading else 0
+                    
+                    para_height = base_line_height + spacing_before + spacing_after + heading_extra_space + 3
+                    
+                    cumulative_height_pt += para_height
+                    
+                    # If we've exceeded the first page height, mark this as the boundary
+                    if cumulative_height_pt > available_height_pt:
+                        estimated_first_page_end = temp_para_index
+                        break
+                    
+                    temp_para_index += 1
+        
+        # Determine which method to use for first page detection
+        first_page_end_index = first_page_break_index if first_page_break_index is not None else estimated_first_page_end
+        
+        # Scan body content again to extract properties
         paragraph_index = 0
         for element in content:
-            # Check for page break
-            if "pageBreak" in element and first_page_break_index is None:
-                first_page_break_index = paragraph_index
-            
             if "paragraph" in element:
                 paragraph = element["paragraph"]
                 para_style = paragraph.get("paragraphStyle", {})
@@ -242,14 +327,17 @@ class GoogleDocsService:
                 para_default_font = para_style_defaults.get("font_family") or fallback_font
                 para_default_size = para_style_defaults.get("font_size") or fallback_size
                 
-                # Get line spacing from paragraph
-                if "lineSpacing" in para_style:
-                    is_on_first_page = first_page_break_index is None or paragraph_index < first_page_break_index
-                    paragraph_line_spacings.append(ParagraphLineSpacing(
-                        paragraph_index=paragraph_index,
-                        line_spacing=para_style["lineSpacing"] / 100,
-                        is_on_first_page=is_on_first_page,
-                    ))
+                # Get line spacing from paragraph (default to 1.15 if not specified, which is Google Docs default)
+                line_spacing = para_style.get("lineSpacing", 115) / 100
+                # Mark as first page if this paragraph is before the first page end (manual break or estimated)
+                is_on_first_page = first_page_end_index is not None and paragraph_index < first_page_end_index
+                paragraph_line_spacings.append(ParagraphLineSpacing(
+                    paragraph_index=paragraph_index,
+                    line_spacing=line_spacing,
+                    is_on_first_page=is_on_first_page,
+                ))
+                if (is_on_first_page):
+                    print(f'''Paragraph {paragraph.get("elements")[0].get("textRun").get("content")}\nline spacing: {line_spacing:.2f}\n''')
                 
                 # Scan text runs in paragraph
                 for elem in paragraph.get("elements", []):
@@ -274,8 +362,8 @@ class GoogleDocsService:
                         if "fontSize" in text_style:
                             font_size = text_style["fontSize"].get("magnitude", para_default_size)
                         
-                        # Determine if this segment is on the first page
-                        is_on_first_page = first_page_break_index is None or paragraph_index < first_page_break_index
+                        # Determine if this segment is on the first page (using manual break or estimation)
+                        is_on_first_page = first_page_end_index is not None and paragraph_index < first_page_end_index
                         
                         # Create a TextSegment for this run
                         text_segments.append(TextSegment(
