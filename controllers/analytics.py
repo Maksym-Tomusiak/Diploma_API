@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from core.analytics import AnalyticsService
-from crud.analytics import AnalyticsRepository
-from crud.user import UserRepository
+from crud.analytics import AnalyticsRepositoryDependency
+from crud.user import UserRepositoryDependency
 from db import get_db
 from core import AdminUserDependency
 from schemas.analytics import AnalyticsDashboardResponse
@@ -12,10 +12,11 @@ from schemas.analytics import AnalyticsDashboardResponse
 analytics_router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
-def get_analytics_service(db: Session = Depends(get_db)) -> AnalyticsService:
-    analytics_repo = AnalyticsRepository(db)
-    user_repo = UserRepository(db)
-    return AnalyticsService(analytics_repo, user_repo)
+def get_analytics_service(
+    analytics_repository: AnalyticsRepositoryDependency = None,
+    user_repository: UserRepositoryDependency = None
+) -> AnalyticsService:
+    return AnalyticsService(analytics_repository, user_repository)
 
 
 AnalyticsServiceDependency = Annotated[AnalyticsService, Depends(get_analytics_service)]

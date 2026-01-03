@@ -203,10 +203,6 @@ class FormatCheckerService:
                 if spacing_diff > self.LINE_SPACING_TOLERANCE:
                     wrong_spacing_values[pls.line_spacing] = wrong_spacing_values.get(pls.line_spacing, 0) + 1
             
-            print(f"DEBUG: Line spacing check - Total paragraphs: {len(doc_props.paragraph_line_spacings)}, Checked: {checked_count}, Skipped (first page): {skipped_count}")
-            print(f"DEBUG: Expected line spacing: {params.line_spacing}, Tolerance: {self.LINE_SPACING_TOLERANCE}")
-            print(f"DEBUG: Wrong spacing found: {wrong_spacing_values}")
-            
             for actual_spacing, count in wrong_spacing_values.items():
                 issues.append(FormatIssue(
                     type="line_spacing_mismatch",

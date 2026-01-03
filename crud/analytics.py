@@ -1,15 +1,19 @@
+from typing import Annotated
 from datetime import datetime, timedelta
+
+from fastapi import Depends
 from sqlalchemy import select, func, and_, or_, case
 from sqlalchemy.orm import Session
 
+from db import SessionDep
 from models.document import Document
 from models.user import User
 from models.user_action_log import UserActionLog
 
 
 class AnalyticsRepository:
-    def __init__(self, db: Session):
-        self.db = db
+    def __init__(self, session: SessionDep):
+        self.session = session
 
     def get_document_processing_last_week(self):
         """Get document processing statistics for the last 7 days"""
@@ -40,7 +44,7 @@ class AnalyticsRepository:
             .order_by(func.date(UserActionLog.created_at))
         )
         
-        return self.db.execute(query).all()
+        return self.session.execute(query).all()
 
     def get_user_registrations_last_week(self):
         """Get user registration statistics for the last 7 days"""
@@ -56,7 +60,7 @@ class AnalyticsRepository:
             .order_by(func.date(User.created_at))
         )
         
-        return self.db.execute(query).all()
+        return self.session.execute(query).all()
 
     def get_recent_users(self, limit: int = 10):
         """Get most recently registered users"""
@@ -66,7 +70,7 @@ class AnalyticsRepository:
             .limit(limit)
         )
         
-        return self.db.scalars(query).all()
+        return self.session.scalars(query).all()
 
     def get_recent_bans_unbans(self, limit: int = 4):
         """Get recent ban and unban actions"""
@@ -82,4 +86,7 @@ class AnalyticsRepository:
             .limit(limit)
         )
         
-        return self.db.scalars(query).all()
+        return self.session.scalars(query).all()
+
+
+AnalyticsRepositoryDependency = Annotated[AnalyticsRepository, Depends(AnalyticsRepository)]

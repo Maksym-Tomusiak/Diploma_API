@@ -1,9 +1,10 @@
 import httpx
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Annotated
 import logging
 
-from crud import font as font_crud
+from fastapi import Depends
+from crud.font import FontRepositoryDependency
 from schemas.font import FontDto
 from common.app_settings import settings
 
@@ -22,25 +23,25 @@ STANDARD_FONTS = [
 ]
 
 
-def get_all_fonts(db: Session) -> List[FontDto]:
+def get_all_fonts(font_repository: FontRepositoryDependency) -> List[FontDto]:
     """Get all available fonts"""
-    fonts = font_crud.get_all_fonts(db)
+    fonts = font_repository.get_all_fonts()
     return [FontDto.from_font(font) for font in fonts]
 
 
-def get_font_by_id(db: Session, font_id: int) -> FontDto | None:
+def get_font_by_id(font_repository: FontRepositoryDependency, font_id: int) -> FontDto | None:
     """Get font by ID"""
-    font = font_crud.get_font_by_id(db, font_id)
+    font = font_repository.get_font_by_id(font_id)
     return FontDto.from_font(font) if font else None
 
 
-def get_font_by_family(db: Session, family: str) -> FontDto | None:
+def get_font_by_family(font_repository: FontRepositoryDependency, family: str) -> FontDto | None:
     """Get font by family name"""
-    font = font_crud.get_font_by_family(db, family)
+    font = font_repository.get_font_by_family(family)
     return FontDto.from_font(font) if font else None
 
 
-def seed_standard_fonts(db: Session) -> int:
+def seed_standard_fonts(font_repository: FontRepositoryDependency) -> int:
     """
     Seed standard fonts that are not available in Google Fonts API
     Returns the number of fonts added
@@ -49,7 +50,7 @@ def seed_standard_fonts(db: Session) -> int:
         fonts_data = []
         for font in STANDARD_FONTS:
             # Check if font already exists
-            existing = font_crud.get_font_by_family(db, font["name"])
+            existing = font_repository.get_font_by_family(font["name"])
             if not existing:
                 font_data = {
                     "family": font["name"],
@@ -62,7 +63,7 @@ def seed_standard_fonts(db: Session) -> int:
                 fonts_data.append(font_data)
         
         if fonts_data:
-            count = font_crud.bulk_create_fonts(db, fonts_data)
+            count = font_repository.bulk_create_fonts(fonts_data)
             logger.info(f"Successfully seeded {count} standard fonts")
             return count
         else:
@@ -74,7 +75,7 @@ def seed_standard_fonts(db: Session) -> int:
         raise Exception(f"Failed to seed standard fonts: {str(e)}")
 
 
-def seed_fonts_from_google(db: Session, api_key: str) -> int:
+def seed_fonts_from_google(font_repository: FontRepositoryDependency, api_key: str) -> int:
     """
     Seed fonts from Google Web Fonts API
     Returns the number of fonts added
@@ -102,7 +103,7 @@ def seed_fonts_from_google(db: Session, api_key: str) -> int:
             fonts_data.append(font_data)
         
         # Bulk insert fonts
-        count = font_crud.bulk_create_fonts(db, fonts_data)
+        count = font_repository.bulk_create_fonts(fonts_data)
         logger.info(f"Successfully seeded {count} fonts from Google Web Fonts API")
         return count
         
@@ -114,7 +115,7 @@ def seed_fonts_from_google(db: Session, api_key: str) -> int:
         raise Exception(f"Failed to seed fonts: {str(e)}")
 
 
-def seed_fonts_from_google_with_settings(db: Session) -> int:
+def seed_fonts_from_google_with_settings(font_repository: FontRepositoryDependency) -> int:
     """
     Seed fonts from Google Web Fonts API using API key from settings
     Also seeds standard fonts first
@@ -126,20 +127,20 @@ def seed_fonts_from_google_with_settings(db: Session) -> int:
         raise Exception("GOOGLE_FONTS_API_KEY not found in environment variables")
     
     # First seed standard fonts
-    standard_count = seed_standard_fonts(db)
+    standard_count = seed_standard_fonts(font_repository)
     
     # Then seed Google fonts
-    google_count = seed_fonts_from_google(db, google_api_key)
+    google_count = seed_fonts_from_google(font_repository, google_api_key)
     
     return standard_count + google_count
 
 
-def ensure_fonts_seeded(db: Session) -> bool:
+def ensure_fonts_seeded(font_repository: FontRepositoryDependency) -> bool:
     """
     Check if fonts are seeded, if not - seed them from Google Fonts API and standard fonts
     Returns True if fonts were seeded, False if they already existed
     """
-    count = font_crud.count_fonts(db)
+    count = font_repository.count_fonts()
     
     if count > 0:
         logger.info(f"Fonts already seeded ({count} fonts found)")
@@ -149,7 +150,7 @@ def ensure_fonts_seeded(db: Session) -> bool:
     
     # First seed standard fonts (always works, no API key needed)
     try:
-        seed_standard_fonts(db)
+        seed_standard_fonts(font_repository)
     except Exception as e:
         logger.error(f"Failed to seed standard fonts: {e}")
     
@@ -162,7 +163,7 @@ def ensure_fonts_seeded(db: Session) -> bool:
     
     logger.info("Seeding fonts from Google Web Fonts API...")
     try:
-        seed_fonts_from_google(db, google_api_key)
+        seed_fonts_from_google(font_repository, google_api_key)
     except Exception as e:
         logger.error(f"Failed to seed Google fonts: {e}")
         logger.info("Standard fonts are available for use.")

@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from db import get_db
 from schemas.font import FontDto, FontListResponse, FontSeedResponse
-from crud import font as font_crud
+from crud.font import FontRepositoryDependency
 
 
 router = APIRouter(prefix="/fonts", tags=["fonts"])
@@ -15,11 +15,11 @@ def list_fonts(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(10, ge=1, le=1000, description="Number of records to return"),
     search: Optional[str] = Query(None, description="Search by font family name"),
-    db: Session = Depends(get_db)
+    font_repository: FontRepositoryDependency = None
 ) -> dict:
     """Get paginated list of all fonts with optional search"""
-    fonts = font_crud.get_all_fonts(db, skip=skip, limit=limit, search=search)
-    total = font_crud.count_fonts(db, search=search)
+    fonts = font_repository.get_all_fonts(skip=skip, limit=limit, search=search)
+    total = font_repository.count_fonts(search=search)
     
     return {
         "fonts": [FontDto.model_validate(font) for font in fonts],
@@ -32,10 +32,10 @@ def list_fonts(
 @router.get("/{font_id}", response_model=FontDto)
 def get_font(
     font_id: int,
-    db: Session = Depends(get_db)
+    font_repository: FontRepositoryDependency = None
 ):
     """Get font by ID"""
-    font = font_crud.get_font_by_id(db, font_id)
+    font = font_repository.get_font_by_id(font_id)
     if not font:
         raise HTTPException(status_code=404, detail="Font not found")
     return font
@@ -44,10 +44,10 @@ def get_font(
 @router.get("/by-family/{family}", response_model=FontDto)
 def get_font_by_family(
     family: str,
-    db: Session = Depends(get_db)
+    font_repository: FontRepositoryDependency = None
 ):
     """Get font by family name"""
-    font = font_crud.get_font_by_family(db, family)
+    font = font_repository.get_font_by_family(family)
     if not font:
         raise HTTPException(status_code=404, detail="Font not found")
     return font
@@ -55,7 +55,7 @@ def get_font_by_family(
 
 @router.post("/seed", response_model=FontSeedResponse)
 def seed_fonts(
-    db: Session = Depends(get_db)
+    font_repository: FontRepositoryDependency = None
 ):
     """
     Manually seed fonts from Google Web Fonts API
@@ -63,7 +63,7 @@ def seed_fonts(
     """
     from core import font as font_core
     try:
-        count = font_core.seed_fonts_from_google_with_settings(db)
+        count = font_core.seed_fonts_from_google_with_settings(font_repository)
         return FontSeedResponse(
             success=True,
             message=f"Successfully seeded {count} fonts",

@@ -16,6 +16,7 @@ from controllers import (
 )
 from db import SessionLocal
 from core.font import ensure_fonts_seeded
+from crud.font import FontRepository
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,8 @@ async def lifespan(app: FastAPI):
     try:
         db = SessionLocal()
         try:
-            ensure_fonts_seeded(db)
+            font_repository = FontRepository(db)
+            ensure_fonts_seeded(font_repository)
         finally:
             db.close()
     except Exception as e:
