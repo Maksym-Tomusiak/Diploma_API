@@ -135,10 +135,11 @@ class DocumentFormatterService:
                     description=f"Set margins: top={params.margins.top}mm, bottom={params.margins.bottom}mm, left={params.margins.left}mm, right={params.margins.right}mm",
                 ))
             
-            # 2. Enable "different first page" if skip_first_page is enabled
+            # 2. Handle "Different first page" setting
             needs_second_pass_for_first_page = False
+            
             if params.skip_first_page:
-                # Always set this, even if it's already enabled, to ensure it's properly configured
+                # User WANTS to skip first page (hide number/header)
                 requests.append({
                     "updateDocumentStyle": {
                         "documentStyle": {
@@ -156,6 +157,24 @@ class DocumentFormatterService:
                     # to clear the first page footer (it won't exist until after this request)
                     if doc_props.has_page_numbers:
                         needs_second_pass_for_first_page = True
+            
+            else:
+                # User WANTS numbering on first page (skip_first_page = False)
+                # Logic Fix: If 'Different first page' is ON, Page 1 has a separate footer (usually empty).
+                # We must DISABLE it so Page 1 uses the default footer (which has the number).
+                if doc_props.first_page_different:
+                    requests.append({
+                        "updateDocumentStyle": {
+                            "documentStyle": {
+                                "useFirstPageHeaderFooter": False,
+                            },
+                            "fields": "useFirstPageHeaderFooter",
+                        }
+                    })
+                    changes.append(FormatChange(
+                        type="first_page_not_different",
+                        description="Disabled 'Different first page' to ensure page numbering appears on the first page",
+                    ))
             
             # 3. Handle page numbering (only if NOT needing second pass, or first_page_different already true)
             if not needs_second_pass_for_first_page:
@@ -430,23 +449,11 @@ class DocumentFormatterService:
         # When page numbering check is enabled, always configure the start page
         if has_page_numbers or params.check_numbering:
             # Calculate what pageNumberStart should be set to in Google Docs
-            # 
-            # If skip_first_page is True (different first page):
-            #   - Page 1 has no number (different first page)
-            #   - Page 2 shows the value of pageNumberStart
-            #   - If user wants page 2 to show "3", we need pageNumberStart = 3
-            # 
-            # If skip_first_page is False:
-            #   - Page 1 shows the value of pageNumberStart
-            #   - Set pageNumberStart = expected_start
             
             if params.skip_first_page:
                 # With "different first page", page 2 will be the first numbered page
                 # Set pageNumberStart to expected_start so page 2 shows that number
                 page_number_value = expected_start
-                
-                # Note: If expected_start > 2, the user wants higher starting number.
-                # Page 2 will show that number, page 3 shows expected_start+1, etc.
             else:
                 # Without "different first page", page 1 will be the first numbered page
                 page_number_value = expected_start

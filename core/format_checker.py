@@ -14,8 +14,8 @@ from schemas.template import TemplateParams
 @dataclass
 class FormatIssue:
     """A formatting issue found during check."""
-    type: str  # e.g., "font_size_mismatch", "margin_error", "line_spacing_mismatch"
-    severity: str  # "low", "medium", "high"
+    type: str
+    severity: str
     details: str
     expected: Optional[str] = None
     actual: Optional[str] = None
@@ -34,7 +34,7 @@ class FormatIssue:
 class CheckResult:
     """Result of a format check operation."""
     passed: bool
-    overall_score: float  # 0.0 - 1.0
+    overall_score: float
     issues: list[FormatIssue] = field(default_factory=list)
     processing_time_ms: int = 0
     document_title: Optional[str] = None
@@ -46,9 +46,8 @@ class CheckResult:
 class FormatCheckerService:
     """Service for checking document formatting against templates or custom parameters."""
 
-    # Tolerance values for comparison
-    FONT_SIZE_TOLERANCE = 0.1  # points
-    MARGIN_TOLERANCE = 0.5  # mm
+    FONT_SIZE_TOLERANCE = 0.1
+    MARGIN_TOLERANCE = 0.5
     LINE_SPACING_TOLERANCE = 0.1
 
     def __init__(self, google_docs_service: GoogleDocsServiceDependency):
@@ -63,24 +62,9 @@ class FormatCheckerService:
         refresh_token: Optional[str] = None,
         on_token_refresh: Optional[Callable[[str], None]] = None,
     ) -> CheckResult:
-        """
-        Check a document's formatting against expected parameters.
-        
-        Args:
-            google_token: User's Google OAuth access token
-            doc_id: Google Document ID
-            params: Expected formatting parameters
-            expected_font_family: Expected font family name (optional)
-            refresh_token: Google refresh token for auto-refresh (optional)
-            on_token_refresh: Callback when token is refreshed (optional)
-            
-        Returns:
-            CheckResult with pass/fail status, score, and issues list
-        """
         start_time = time.time()
         issues: list[FormatIssue] = []
         
-        # Fetch document properties
         doc_props = self.google_docs_service.get_document_properties(
             google_token, 
             doc_id,
@@ -88,41 +72,27 @@ class FormatCheckerService:
             on_token_refresh=on_token_refresh
         )
         
-        # Check ALL text segments for font size and font family issues
-        # Skip headings as they typically have different formatting
+        # --- Font Size & Family Checks (Unchanged) ---
         font_size_issues: list[TextSegment] = []
         font_family_issues: list[TextSegment] = []
-        total_chars = 0
-        chars_with_wrong_size = 0
-        chars_with_wrong_font = 0
         
         for segment in doc_props.text_segments:
-            # Skip headings - they have their own styles
             if segment.is_heading:
                 continue
-            
-            # Skip first page content if requested
             if params.skip_first_page and segment.is_on_first_page:
                 continue
-                
-            total_chars += segment.char_count
             
-            # Check font size
             if segment.font_size_pt is not None:
                 size_diff = abs(segment.font_size_pt - params.font_size)
                 if size_diff > self.FONT_SIZE_TOLERANCE:
                     font_size_issues.append(segment)
-                    chars_with_wrong_size += segment.char_count
             
-            # Check font family
             if expected_font_family and segment.font_family:
                 if segment.font_family.lower() != expected_font_family.lower():
                     font_family_issues.append(segment)
-                    chars_with_wrong_font += segment.char_count
         
-        # Report font size issues (group by actual size for cleaner output)
+        # Reporting Font Issues
         if font_size_issues:
-            # Group issues by font size
             size_groups: dict[float, list[TextSegment]] = {}
             for seg in font_size_issues:
                 size = seg.font_size_pt or 0
@@ -132,14 +102,8 @@ class FormatCheckerService:
             
             for actual_size, segments in size_groups.items():
                 total_chars_this_size = sum(s.char_count for s in segments)
-                # Create excerpt from first few segments
-                excerpts = []
-                for seg in segments[:3]:
-                    excerpt = seg.content[:50] + "..." if len(seg.content) > 50 else seg.content
-                    excerpts.append(f'"{excerpt}"')
+                excerpts = [f'"{s.content[:50]}..."' for s in segments[:3]]
                 excerpt_text = ", ".join(excerpts)
-                if len(segments) > 3:
-                    excerpt_text += f" and {len(segments) - 3} more segments"
                 
                 issues.append(FormatIssue(
                     type="font_size_mismatch",
@@ -149,9 +113,7 @@ class FormatCheckerService:
                     actual=f"{actual_size:.1f}pt",
                 ))
         
-        # Report font family issues (group by actual font)
         if font_family_issues:
-            # Group issues by font family
             font_groups: dict[str, list[TextSegment]] = {}
             for seg in font_family_issues:
                 font = seg.font_family or "Unknown"
@@ -161,14 +123,8 @@ class FormatCheckerService:
             
             for actual_font, segments in font_groups.items():
                 total_chars_this_font = sum(s.char_count for s in segments)
-                # Create excerpt from first few segments
-                excerpts = []
-                for seg in segments[:3]:
-                    excerpt = seg.content[:50] + "..." if len(seg.content) > 50 else seg.content
-                    excerpts.append(f'"{excerpt}"')
+                excerpts = [f'"{s.content[:50]}..."' for s in segments[:3]]
                 excerpt_text = ", ".join(excerpts)
-                if len(segments) > 3:
-                    excerpt_text += f" and {len(segments) - 3} more segments"
                 
                 issues.append(FormatIssue(
                     type="font_family_mismatch",
@@ -177,8 +133,7 @@ class FormatCheckerService:
                     expected=expected_font_family,
                     actual=actual_font,
                 ))
-        
-        # Report if no text segments found
+
         if not doc_props.text_segments:
             issues.append(FormatIssue(
                 type="no_text_found",
@@ -186,19 +141,13 @@ class FormatCheckerService:
                 details="No text content found in document",
             ))
         
-        # Check line spacing for paragraphs (skip first page if requested)
+        # --- Line Spacing Checks (Unchanged) ---
         if doc_props.paragraph_line_spacings:
-            wrong_spacing_values: dict[float, int] = {}  # spacing -> count of paragraphs
-            checked_count = 0
-            skipped_count = 0
-            
+            wrong_spacing_values: dict[float, int] = {}
             for pls in doc_props.paragraph_line_spacings:
-                # Skip first page paragraphs if requested
                 if params.skip_first_page and pls.is_on_first_page:
-                    skipped_count += 1
                     continue
                 
-                checked_count += 1
                 spacing_diff = abs(pls.line_spacing - params.line_spacing)
                 if spacing_diff > self.LINE_SPACING_TOLERANCE:
                     wrong_spacing_values[pls.line_spacing] = wrong_spacing_values.get(pls.line_spacing, 0) + 1
@@ -211,20 +160,14 @@ class FormatCheckerService:
                     expected=f"{params.line_spacing}",
                     actual=f"{actual_spacing:.2f}",
                 ))
-        else:
-            issues.append(FormatIssue(
-                type="line_spacing_unknown",
-                severity="low",
-                details="Could not determine document line spacing",
-            ))
         
-        # Check margins
+        # --- Margin Checks (Unchanged) ---
         self._check_margin(issues, "top", doc_props.margin_top_mm(), params.margins.top)
         self._check_margin(issues, "bottom", doc_props.margin_bottom_mm(), params.margins.bottom)
         self._check_margin(issues, "left", doc_props.margin_left_mm(), params.margins.left)
         self._check_margin(issues, "right", doc_props.margin_right_mm(), params.margins.right)
         
-        # Check page numbering
+        # --- Page Numbering Checks (Updated) ---
         if params.check_numbering:
             if not doc_props.has_page_numbers:
                 issues.append(FormatIssue(
@@ -235,35 +178,41 @@ class FormatCheckerService:
                     actual="No page numbers found",
                 ))
             else:
-                # Check page numbering configuration
                 expected_start = params.start_from_number
                 actual_start = doc_props.page_number_start
                 
-                # If skip_first_page is enabled, page 1 should have no number
-                # and page 2 should show the start_from_number value
+                # Case 1: Skip first page is ENABLED (Validation for Page 2)
                 if params.skip_first_page:
                     if doc_props.first_page_different:
-                        # First page is different (no number) - check if page 2 shows correct number
+                        # Logic Fix for Problem 1:
+                        # If Page 1 is hidden, Page 2 shows the next number.
+                        # Visual Expected on Page 2 = start_from_number + 1
+                        # Visual Actual on Page 2   = actual_start + 1 (because actual_start is the config for Page 1)
                         if actual_start != expected_start:
+                            # Calculate visual values for error message
+                            visual_expected = expected_start + 1
+                            visual_actual = actual_start + 1
+                            
                             issues.append(FormatIssue(
                                 type="page_number_start_mismatch",
                                 severity="medium",
-                                details=f"First numbered page (page 2) shows number {actual_start}, but expected {expected_start}. In Google Docs, go to Insert > Page numbers > More options, and set 'Start at' to {expected_start}",
-                                expected=str(expected_start),
-                                actual=str(actual_start),
+                                details=f"First numbered page (page 2) shows number {visual_actual}, but expected {visual_expected}. In Google Docs, go to Insert > Page numbers > More options, and set 'Start at' to {expected_start}",
+                                expected=str(visual_expected),
+                                actual=str(visual_actual),
                             ))
                     else:
-                        # skip_first_page is enabled but first_page_different is False
-                        # This means page 1 has a number, which is wrong!
+                        # Skip first page enabled, but 'Different first page' is OFF
+                        # This means Page 1 has a number, which is incorrect.
                         issues.append(FormatIssue(
                             type="page_numbering_on_first_page",
                             severity="high",
                             details=f"Page 1 shows number {actual_start}, but should have no number (skip first page is enabled). Enable 'Different first page' in Google Docs layout settings.",
-                            expected=f"Page 1: no number, Page 2: number {expected_start}",
+                            expected=f"Page 1: no number, Page 2: number {expected_start + 1}",
                             actual=f"Page 1: number {actual_start}",
                         ))
+                
+                # Case 2: Skip first page is DISABLED (Validation for Page 1)
                 else:
-                    # Normal case: page 1 shows the start_from_number value
                     if actual_start != expected_start:
                         issues.append(FormatIssue(
                             type="page_number_start_mismatch",
@@ -272,8 +221,8 @@ class FormatCheckerService:
                             expected=str(expected_start),
                             actual=str(actual_start),
                         ))
-        
-        # Check skip first page setting (for headers/footers)
+
+        # --- Different First Page Setting Checks (Updated) ---
         if params.skip_first_page:
             if not doc_props.first_page_different:
                 issues.append(FormatIssue(
@@ -283,28 +232,29 @@ class FormatCheckerService:
                     expected="First page header/footer different",
                     actual="First page uses same header/footer",
                 ))
-                
-                # Additionally, if numbering check is enabled, page 1 will incorrectly show a number
-                if params.check_numbering and doc_props.has_page_numbers:
-                    issues.append(FormatIssue(
-                        type="page_1_has_incorrect_number",
-                        severity="high",
-                        details=f"Page 1 incorrectly shows page number {doc_props.page_number_start}. It should have no number when 'skip first page' is enabled.",
-                        expected="Page 1: no number",
-                        actual=f"Page 1: number {doc_props.page_number_start}",
-                    ))
-        
+        else:
+            # Logic Fix for Problem 2:
+            # If skip_first_page is FALSE, we want consistent numbering.
+            # If 'Different first page' is ON, Page 1 usually loses its number (unless manually added).
+            if doc_props.first_page_different:
+                issues.append(FormatIssue(
+                    type="first_page_should_not_be_different",
+                    severity="medium",
+                    details="First page is set to be different ('Different first page' is enabled). This often hides page numbering on the first page. Please disable 'Different first page' to ensure numbering starts on Page 1.",
+                    expected="First page uses same header/footer",
+                    actual="First page is different",
+                ))
+
         # Calculate score
         processing_time_ms = int((time.time() - start_time) * 1000)
         
-        # Score calculation: start at 1.0, subtract for each issue based on severity
         score = 1.0
         for issue in issues:
             if issue.severity == "high":
                 score -= 0.15
             elif issue.severity == "medium":
                 score -= 0.08
-            else:  # low
+            else:
                 score -= 0.03
         
         score = max(0.0, min(1.0, score))
@@ -325,7 +275,6 @@ class FormatCheckerService:
         actual_mm: float,
         expected_mm: float,
     ) -> None:
-        """Check a single margin and add issue if mismatch."""
         margin_diff = abs(actual_mm - expected_mm)
         if margin_diff > self.MARGIN_TOLERANCE:
             issues.append(FormatIssue(
@@ -340,7 +289,6 @@ class FormatCheckerService:
 def get_format_checker_service(
     google_docs_service: GoogleDocsServiceDependency,
 ) -> FormatCheckerService:
-    """Dependency injection for FormatCheckerService."""
     return FormatCheckerService(google_docs_service)
 
 

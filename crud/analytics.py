@@ -19,24 +19,23 @@ class AnalyticsRepository:
         """Get document processing statistics for the last 7 days"""
         seven_days_ago = datetime.utcnow() - timedelta(days=7)
         
-        # Count documents created (which represents processing activity)
-        # Since we log DOCUMENT_CREATE when documents are processed
+        # Count document checks and formatting operations
         query = (
             select(
                 func.date(UserActionLog.created_at).label("date"),
                 func.count(
-                    case((UserActionLog.action_type == "DOCUMENT_CREATE", 1))
+                    case((UserActionLog.action_type == "DOCUMENT_CHECK", 1))
                 ).label("checks"),
                 func.count(
-                    case((UserActionLog.action_type == "CHECK_RESULT_VIEW", 1))
+                    case((UserActionLog.action_type == "DOCUMENT_FORMAT", 1))
                 ).label("formatting"),
             )
             .where(
                 and_(
                     UserActionLog.created_at >= seven_days_ago,
                     or_(
-                        UserActionLog.action_type == "DOCUMENT_CREATE",
-                        UserActionLog.action_type == "CHECK_RESULT_VIEW",
+                        UserActionLog.action_type == "DOCUMENT_CHECK",
+                        UserActionLog.action_type == "DOCUMENT_FORMAT",
                     )
                 )
             )
