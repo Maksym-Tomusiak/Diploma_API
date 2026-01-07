@@ -225,7 +225,7 @@ class FormatCheckerService:
         self._check_margin(issues, "right", doc_props.margin_right_mm(), params.margins.right)
         
         # Check page numbering
-        if params.page_numbering.enabled:
+        if params.check_numbering:
             if not doc_props.has_page_numbers:
                 issues.append(FormatIssue(
                     type="page_numbering_missing",
@@ -235,31 +235,35 @@ class FormatCheckerService:
                     actual="No page numbers found",
                 ))
             else:
-                # When skip_first_page is enabled, the page numbering behavior is special:
-                # - If first_page_different is true, page 1 has no number
-                # - Page 2 (first numbered page) shows the number from page_number_start
-                # - So if user wants "start from page 2", they need page_number_start = 2
-                # However, some docs might have page_number_start = 1 even with different first page,
-                # which means page 2 shows "1". We need to check what the user expects.
-                
-                expected_start = params.page_numbering.start_page
+                # Check page numbering configuration
+                expected_start = params.start_from_number
                 actual_start = doc_props.page_number_start
                 
-                # If skip_first_page is enabled and document has different first page,
-                # the page_number_start tells us what number appears on page 2
-                if params.skip_first_page and doc_props.first_page_different:
-                    # Page 2 shows page_number_start value
-                    # User expects page 2 to show start_page value
-                    if actual_start != expected_start:
+                # If skip_first_page is enabled, page 1 should have no number
+                # and page 2 should show the start_from_number value
+                if params.skip_first_page:
+                    if doc_props.first_page_different:
+                        # First page is different (no number) - check if page 2 shows correct number
+                        if actual_start != expected_start:
+                            issues.append(FormatIssue(
+                                type="page_number_start_mismatch",
+                                severity="medium",
+                                details=f"First numbered page (page 2) shows number {actual_start}, but expected {expected_start}. In Google Docs, go to Insert > Page numbers > More options, and set 'Start at' to {expected_start}",
+                                expected=str(expected_start),
+                                actual=str(actual_start),
+                            ))
+                    else:
+                        # skip_first_page is enabled but first_page_different is False
+                        # This means page 1 has a number, which is wrong!
                         issues.append(FormatIssue(
-                            type="page_number_start_mismatch",
-                            severity="low",
-                            details=f"First numbered page (page 2) shows number {actual_start}, but expected {expected_start}. In Google Docs, go to Insert > Page numbers > More options, and set 'Start at' to {expected_start}",
-                            expected=str(expected_start),
-                            actual=str(actual_start),
+                            type="page_numbering_on_first_page",
+                            severity="high",
+                            details=f"Page 1 shows number {actual_start}, but should have no number (skip first page is enabled). Enable 'Different first page' in Google Docs layout settings.",
+                            expected=f"Page 1: no number, Page 2: number {expected_start}",
+                            actual=f"Page 1: number {actual_start}",
                         ))
-                elif not params.skip_first_page:
-                    # Normal case: page 1 shows page_number_start value
+                else:
+                    # Normal case: page 1 shows the start_from_number value
                     if actual_start != expected_start:
                         issues.append(FormatIssue(
                             type="page_number_start_mismatch",
@@ -269,16 +273,26 @@ class FormatCheckerService:
                             actual=str(actual_start),
                         ))
         
-        # Check skip first page setting
+        # Check skip first page setting (for headers/footers)
         if params.skip_first_page:
             if not doc_props.first_page_different:
                 issues.append(FormatIssue(
                     type="first_page_not_different",
-                    severity="low",
-                    details="First page should be different (skip first page is enabled) but document doesn't have this setting",
+                    severity="high",
+                    details="First page should be different (skip first page is enabled) but document doesn't have this setting. In Google Docs, go to Format > Page setup, then enable 'Different first page'.",
                     expected="First page header/footer different",
                     actual="First page uses same header/footer",
                 ))
+                
+                # Additionally, if numbering check is enabled, page 1 will incorrectly show a number
+                if params.check_numbering and doc_props.has_page_numbers:
+                    issues.append(FormatIssue(
+                        type="page_1_has_incorrect_number",
+                        severity="high",
+                        details=f"Page 1 incorrectly shows page number {doc_props.page_number_start}. It should have no number when 'skip first page' is enabled.",
+                        expected="Page 1: no number",
+                        actual=f"Page 1: number {doc_props.page_number_start}",
+                    ))
         
         # Calculate score
         processing_time_ms = int((time.time() - start_time) * 1000)

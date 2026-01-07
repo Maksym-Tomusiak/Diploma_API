@@ -5,6 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from models.document import Document, DocumentStatus  # Import actual enum
+from schemas.template import TemplateParams
 
 
 class DocumentCreate(BaseModel):
@@ -41,3 +42,28 @@ class DocumentDto(BaseModel):
         )
 
     model_config = SettingsConfigDict(from_attributes=True)
+
+
+class FormatDocumentRequest(BaseModel):
+    """Request body for formatting a document."""
+    template_id: Optional[int] = Field(None, description="Template ID for formatting rules")
+    custom_params: Optional[TemplateParams] = Field(None, description="Custom formatting parameters")
+    font_family: Optional[str] = Field(None, description="Font family to apply")
+
+
+class FormatChange(BaseModel):
+    """A formatting change applied to the document."""
+    type: str
+    description: str
+    before: Optional[str] = None
+    after: Optional[str] = None
+
+
+class FormatResultDto(BaseModel):
+    """Result of a format operation."""
+    success: bool
+    changes_applied: int
+    changes: list[FormatChange]
+    processing_time_ms: int
+    document_title: Optional[str] = None
+    error_message: Optional[str] = None

@@ -10,7 +10,8 @@ from core import (
     UserServiceDependency,
 )
 from core.format_checker import FormatCheckerServiceDependency
-from schemas.document import DocumentCreate, DocumentDto
+from core.document_formatter import DocumentFormatterServiceDependency
+from schemas.document import DocumentCreate, DocumentDto, FormatDocumentRequest, FormatResultDto
 from schemas.check_result import CheckDocumentRequest, CheckResultDto
 from schemas.template import TemplateParams
 
@@ -247,3 +248,128 @@ async def check_document(
     )
     
     return saved_result
+
+
+@document_router.post("/{document_id}/format", response_model=FormatResultDto)
+async def format_document(
+    document_id: UUID,
+    data: FormatDocumentRequest,
+    current_user: CurrentUserDependency,
+    document_service: DocumentServiceDependency,
+    template_service: TemplateServiceDependency,
+    document_formatter: DocumentFormatterServiceDependency,
+    user_service: UserServiceDependency,
+    log_service: UserActionLogServiceDependency,
+    request: Request,
+):
+    """
+    Apply formatting to a document based on a template or custom parameters.
+    
+    This will modify the actual Google Doc, applying:
+    - Font size and font family
+    - Line spacing
+    - Page margins
+    
+    Provide either:
+    - template_id: Use an existing template's formatting rules
+    - custom_params + optional font_family: Use custom formatting parameters
+    """
+    # Check for banned users
+    if current_user.is_banned:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot format documents while your account is banned",
+        )
+    
+    # Verify document exists and belongs to user (admins can access any document)
+    from models.user import UserRole
+    is_admin = current_user.role == UserRole.ADMIN
+    document = document_service.get_document(document_id, current_user.id, is_admin=is_admin)
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+    
+    # Verify user has Google token
+    if not current_user.google_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No Google access token found. Please log in again.",
+        )
+    
+    # Get formatting parameters
+    params: TemplateParams
+    font_family: str | None = None
+    template_id: int | None = None
+    
+    if data.template_id:
+        # Using template
+        template = template_service.get_template(data.template_id)
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found",
+            )
+        params = TemplateParams(**template.params)
+        font_family = template.font_family
+        template_id = data.template_id
+    elif data.custom_params:
+        # Using custom params
+        params = data.custom_params
+        font_family = data.font_family
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either template_id or custom_params must be provided",
+        )
+    
+    # Callback to save refreshed Google token
+    def on_token_refresh(new_token: str):
+        user_service.update_google_token(current_user.id, new_token)
+    
+    # Perform the format operation
+    format_result = document_formatter.format_document(
+        google_token=current_user.google_token,
+        doc_id=document.google_doc_id,
+        params=params,
+        expected_font_family=font_family,
+        refresh_token=current_user.google_refresh_token,
+        on_token_refresh=on_token_refresh,
+    )
+    
+    # Log the format action
+    log_service.log_action(
+        user_id=current_user.id,
+        action_type="DOCUMENT_FORMAT",
+        details={
+            "document_id": str(document_id),
+            "template_id": template_id,
+            "custom_params": data.custom_params is not None,
+            "success": format_result.success,
+            "changes_applied": format_result.changes_applied,
+            "ip_address": request.client.host if request.client else None,
+        }
+    )
+    
+    if not format_result.success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=format_result.error_message or "Failed to format document",
+        )
+    
+    return FormatResultDto(
+        success=format_result.success,
+        changes_applied=format_result.changes_applied,
+        changes=[
+            {
+                "type": c.type,
+                "description": c.description,
+                "before": c.before,
+                "after": c.after,
+            }
+            for c in format_result.changes
+        ],
+        processing_time_ms=format_result.processing_time_ms,
+        document_title=format_result.document_title,
+    )

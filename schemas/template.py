@@ -14,19 +14,14 @@ class PageMargins(BaseModel):
     right: float = Field(..., ge=0, description="Відступ справа (мм)")
 
 
-class PageNumbering(BaseModel):
-    """Налаштування нумерації сторінок"""
-    enabled: bool = Field(default=True, description="Чи включена нумерація сторінок")
-    start_page: int = Field(default=1, ge=1, description="З якої сторінки починати нумерацію")
-
-
 class TemplateParams(BaseModel):
     """Параметри шаблону форматування (без font_family - тепер це окрема сутність)"""
     font_size: float = Field(..., gt=0, description="Розмір шрифту")
     line_spacing: float = Field(..., gt=0, description="Міжрядковий інтервал")
     margins: PageMargins = Field(..., description="Відступи для сторінок")
-    page_numbering: PageNumbering = Field(default_factory=PageNumbering, description="Налаштування нумерації сторінок")
-    skip_first_page: bool = Field(default=False, description="Чи пропускати першу сторінку для всіх перевірок")
+    check_numbering: bool = Field(default=True, description="Чи перевіряти нумерацію сторінок")
+    start_from_number: int = Field(default=1, ge=1, description="З якого номера починати нумерацію")
+    skip_first_page: bool = Field(default=False, description="Чи пропускати першу сторінку (перша сторінка без номера)")
 
 
 class TemplateCreate(BaseModel):
