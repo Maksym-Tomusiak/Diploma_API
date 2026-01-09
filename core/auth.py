@@ -20,12 +20,15 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # Google OAuth Configuration
+# Using drive.file scope (not drive.readonly) - only grants access to files
+# explicitly opened or created by the user with this app, following principle of least privilege.
+# The Google Picker works with drive.file scope and the documents scope covers reading docs.
 GOOGLE_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/documents",
-    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
 ]
 
 security = HTTPBearer()
