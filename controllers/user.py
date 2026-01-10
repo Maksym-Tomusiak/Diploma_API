@@ -98,6 +98,7 @@ async def ban_user(
         action_type="ADMIN_BAN_USER",
         details={
             "banned_user_id": str(user_id),
+            "banned_user_email": result.email,
             "reason": body.reason,
             "ip_address": request.client.host if request.client else None
         },
@@ -126,6 +127,7 @@ async def unban_user(
         action_type="ADMIN_UNBAN_USER",
         details={
             "unbanned_user_id": str(user_id),
+            "unbanned_user_email": result.email,
             "reason": body.reason,
             "ip_address": request.client.host if request.client else None
         },

@@ -238,6 +238,7 @@ async def check_document(
         action_type="DOCUMENT_CHECK",
         details={
             "document_id": str(document_id),
+            "document_title": document.title,
             "template_id": template_id,
             "custom_params": custom_params_dict is not None,
             "passed": check_result.passed,
@@ -344,6 +345,7 @@ async def format_document(
         action_type="DOCUMENT_FORMAT",
         details={
             "document_id": str(document_id),
+            "document_title": document.title,
             "template_id": template_id,
             "custom_params": data.custom_params is not None,
             "success": format_result.success,
