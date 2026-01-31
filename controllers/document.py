@@ -1,9 +1,13 @@
-from fastapi import APIRouter, HTTPException, status, Request
+from fastapi import APIRouter, HTTPException, status, Request, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from uuid import UUID
+from typing import Optional
+from io import BytesIO
 
 from core import (
     DocumentServiceDependency,
     CurrentUserDependency,
+    OptionalUserDependency,
     UserActionLogServiceDependency,
     CheckResultServiceDependency,
     TemplateServiceDependency,
@@ -11,12 +15,287 @@ from core import (
 )
 from core.format_checker import FormatCheckerServiceDependency
 from core.document_formatter import DocumentFormatterServiceDependency
+from core.local_document import LocalDocumentService
+from core.rate_limit import RateLimitServiceDependency
 from schemas.document import DocumentCreate, DocumentDto, FormatDocumentRequest, FormatResultDto
-from schemas.check_result import CheckDocumentRequest, CheckResultDto
+from schemas.check_result import CheckDocumentRequest, CheckResultDto, UploadCheckResultDto
 from schemas.template import TemplateParams
 
 document_router = APIRouter(prefix="/documents", tags=["Documents"])
 
+
+# ====================
+# Upload Endpoints (must come before parameterized routes)
+# ====================
+
+@document_router.post("/upload/check", response_model=UploadCheckResultDto)
+async def check_uploaded_document(
+    request: Request,
+    template_service: TemplateServiceDependency,
+    rate_limit_service: RateLimitServiceDependency,
+    current_user: OptionalUserDependency = None,
+    log_service: UserActionLogServiceDependency = None,
+    file: UploadFile = File(..., description="The .docx file to check"),
+    template_id: Optional[int] = Form(None, description="Template ID to check against"),
+    custom_params: Optional[str] = Form(None, description="Custom parameters as JSON string"),
+    font_family: Optional[str] = Form(None, description="Font family for custom parameters"),
+):
+    """
+    Check an uploaded .docx file's formatting against a template or custom parameters.
+    
+    Provide either:
+    - template_id: Use an existing template's formatting rules
+    - custom_params (JSON string) + optional font_family: Use custom formatting parameters
+    
+    File is not saved, only read and analyzed.
+    
+    Anonymous users: Limited to 10 checks per day.
+    Authenticated users: Unlimited checks.
+    """
+    # Handle rate limiting for anonymous users
+    remaining_checks = None
+    if not current_user:
+        # Anonymous user - apply rate limiting
+        ip_address = request.client.host if request.client else "unknown"
+        rate_info = rate_limit_service.check_and_increment_anonymous_limit(ip_address)
+        remaining_checks = rate_info["remaining_checks"]
+    else:
+        # Authenticated user - check for banned status
+        if current_user.is_banned:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot check documents while your account is banned",
+            )
+    
+    # Validate file is provided and not empty
+    if not file or not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No file provided",
+        )
+    
+    # Validate file type
+    if not file.filename.endswith('.docx'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .docx files are supported",
+        )
+    
+    # Read file content
+    try:
+        file_content = await file.read()
+        if not file_content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File is empty",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read file: {str(e)}",
+        )
+    
+    # Get formatting parameters
+    params: TemplateParams
+    expected_font_family: str | None = None
+    template_id_value: int | None = template_id
+    custom_params_dict: dict | None = None
+    
+    if template_id:
+        # Using template
+        template = template_service.get_template(template_id)
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found",
+            )
+        params = TemplateParams(**template.params)
+        expected_font_family = template.font_family
+    elif custom_params:
+        # Using custom parameters
+        import json
+        try:
+            custom_params_dict = json.loads(custom_params)
+            params = TemplateParams(**custom_params_dict)
+            expected_font_family = font_family
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid custom parameters: {str(e)}",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either template_id or custom_params must be provided",
+        )
+    
+    # Perform check
+    try:
+        local_doc_service = LocalDocumentService()
+        check_result = local_doc_service.check_document(
+            file_content=file_content,
+            params=params,
+            expected_font_family=expected_font_family,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check document: {str(e)}",
+        )
+    
+    # Log the check (only for authenticated users)
+    if current_user and log_service:
+        log_service.log_action(
+            user_id=current_user.id,
+            action_type="DOCUMENT_CHECK",
+            details={
+                "file_name": file.filename,
+                "template_id": template_id_value,
+                "custom_params": custom_params_dict,
+                "check_passed": check_result.passed,
+                "overall_score": check_result.overall_score,
+                "issues_count": len(check_result.issues),
+                "ip_address": request.client.host if request.client else None,
+            }
+        )
+    
+    result = UploadCheckResultDto(
+        passed=check_result.passed,
+        overall_score=check_result.overall_score,
+        issues_count=len(check_result.issues),
+        issues=[issue.to_dict() for issue in check_result.issues],
+        processing_time_ms=check_result.processing_time_ms,
+        document_title=check_result.document_title or file.filename,
+    )
+    
+    # Add remaining checks info for anonymous users
+    if remaining_checks is not None:
+        result.remaining_anonymous_checks = remaining_checks
+    
+    return result
+
+
+@document_router.post("/upload/format")
+async def format_uploaded_document(
+    current_user: CurrentUserDependency,
+    template_service: TemplateServiceDependency,
+    log_service: UserActionLogServiceDependency,
+    request: Request,
+    file: UploadFile = File(...),
+    template_id: Optional[int] = Form(None),
+    custom_params: Optional[str] = Form(None),
+    font_family: Optional[str] = Form(None),
+):
+    """
+    Format an uploaded .docx file according to a template or custom parameters.
+    
+    Provide either:
+    - template_id: Use an existing template's formatting rules
+    - custom_params (JSON string) + optional font_family: Use custom formatting parameters
+    
+    Returns the formatted document as a downloadable .docx file.
+    """
+    # Check for banned users
+    if current_user.is_banned:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot format documents while your account is banned",
+        )
+    
+    # Validate file type
+    if not file.filename or not file.filename.endswith('.docx'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only .docx files are supported",
+        )
+    
+    # Read file content
+    try:
+        file_content = await file.read()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read file: {str(e)}",
+        )
+    
+    # Get formatting parameters
+    params: TemplateParams
+    expected_font_family: str | None = None
+    template_id_value: int | None = template_id
+    custom_params_dict: dict | None = None
+    
+    if template_id:
+        # Using template
+        template = template_service.get_template(template_id)
+        if not template:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Template not found",
+            )
+        params = TemplateParams(**template.params)
+        expected_font_family = template.font_family
+    elif custom_params:
+        # Using custom parameters
+        import json
+        try:
+            custom_params_dict = json.loads(custom_params)
+            params = TemplateParams(**custom_params_dict)
+            expected_font_family = font_family
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid custom parameters: {str(e)}",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either template_id or custom_params must be provided",
+        )
+    
+    # Perform formatting
+    try:
+        local_doc_service = LocalDocumentService()
+        formatted_content, format_result = local_doc_service.format_document(
+            file_content=file_content,
+            params=params,
+            expected_font_family=expected_font_family,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to format document: {str(e)}",
+        )
+    
+    # Log the format operation
+    log_service.log_action(
+        user_id=current_user.id,
+        action_type="DOCUMENT_FORMAT",
+        details={
+            "file_name": file.filename,
+            "template_id": template_id_value,
+            "custom_params": custom_params_dict,
+            "changes_applied": format_result.changes_applied,
+            "ip_address": request.client.host if request.client else None,
+        }
+    )
+    
+    # Return formatted document as downloadable file
+    output_filename = f"formatted_{file.filename}"
+    
+    return StreamingResponse(
+        BytesIO(formatted_content),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{output_filename}"'
+        }
+    )
+
+
+# ====================
+# Document Management Endpoints
+# ====================
 
 @document_router.get("", response_model=list[DocumentDto])
 async def get_user_documents(
@@ -375,3 +654,4 @@ async def format_document(
         processing_time_ms=format_result.processing_time_ms,
         document_title=format_result.document_title,
     )
+

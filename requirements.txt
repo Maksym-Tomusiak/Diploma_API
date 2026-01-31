@@ -179,6 +179,8 @@ python-dotenv==1.2.1
     #   uvicorn
 python-jose[cryptography]==3.5.0
     # via -r requirements.in
+python-multipart==0.0.21
+    # via -r requirements.in
 pytokens==0.3.0
     # via black
 pyyaml==6.0.3

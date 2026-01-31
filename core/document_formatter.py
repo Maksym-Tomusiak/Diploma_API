@@ -508,9 +508,8 @@ class DocumentFormatterService:
                 para_style = paragraph.get("paragraphStyle", {})
                 named_style = para_style.get("namedStyleType", "NORMAL_TEXT")
                 
-                # Skip headings - they have their own formatting
-                if named_style.startswith("HEADING_"):
-                    continue
+                # Check if this is a heading - headings typically have bold by default
+                is_heading = named_style.startswith("HEADING_")
                 
                 # Check if this paragraph is on the first page
                 is_on_first_page = False
@@ -531,6 +530,9 @@ class DocumentFormatterService:
                         end_index = elem.get("endIndex", 0)
                         
                         if end_index > start_index:
+                            # Get existing text style to preserve properties like bold
+                            existing_style = elem.get("textRun", {}).get("textStyle", {})
+                            
                             # Build text style update
                             text_style = {
                                 "fontSize": {
@@ -540,10 +542,24 @@ class DocumentFormatterService:
                             }
                             fields = "fontSize"
                             
+                            # Preserve bold - check explicit bold OR if it's a heading with empty style (inherited bold)
+                            has_explicit_bold = existing_style.get("bold", False)
+                            has_inherited_bold = is_heading and not existing_style  # Empty style means inherited from heading
+                            
+                            if has_explicit_bold or has_inherited_bold:
+                                text_style["bold"] = True
+                                fields += ",bold"
+                            
                             if font_family:
+                                # Preserve existing weight (bold/normal) when changing font family
+                                existing_weight = existing_style.get("weightedFontFamily", {}).get("weight", 400)
+                                # Headings default to bold weight (700)
+                                if is_heading and not existing_style:
+                                    existing_weight = 700
+                                    
                                 text_style["weightedFontFamily"] = {
                                     "fontFamily": font_family,
-                                    "weight": 400
+                                    "weight": existing_weight  # Preserve existing bold/normal
                                 }
                                 fields += ",weightedFontFamily"
                             
@@ -559,22 +575,27 @@ class DocumentFormatterService:
                             })
                 
                 # Update paragraph line spacing
-                start_index = paragraph.get("elements", [{}])[0].get("startIndex", 0)
-                end_index = paragraph.get("elements", [{}])[-1].get("endIndex", 0) if paragraph.get("elements") else 0
-                
-                if end_index > start_index:
-                    requests.append({
-                        "updateParagraphStyle": {
-                            "range": {
-                                "startIndex": start_index,
-                                "endIndex": end_index,
-                            },
-                            "paragraphStyle": {
-                                "lineSpacing": params.line_spacing * 100,  # API uses percentage
-                            },
-                            "fields": "lineSpacing",
-                        }
-                    })
+                # Get the paragraph's actual start and end indices from its elements
+                elements = paragraph.get("elements", [])
+                if elements:
+                    # The paragraph's range should include all its elements
+                    para_start_index = elements[0].get("startIndex")
+                    para_end_index = elements[-1].get("endIndex")
+                    
+                    # Only apply if we have valid indices
+                    if para_start_index is not None and para_end_index is not None and para_end_index > para_start_index:
+                        requests.append({
+                            "updateParagraphStyle": {
+                                "range": {
+                                    "startIndex": para_start_index,
+                                    "endIndex": para_end_index,
+                                },
+                                "paragraphStyle": {
+                                    "lineSpacing": params.line_spacing * 100,  # API uses percentage
+                                },
+                                "fields": "lineSpacing",
+                            }
+                        })
         
         return requests
 

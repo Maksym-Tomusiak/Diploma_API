@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, status
 
-from core import TemplateServiceDependency, CurrentUserDependency, AdminUserDependency
+from core import TemplateServiceDependency, CurrentUserDependency, OptionalUserDependency, AdminUserDependency
 from schemas.template import TemplateCreate, TemplateDto, TemplateUpdate
 
 template_router = APIRouter(prefix="/templates", tags=["Templates"])
@@ -8,21 +8,21 @@ template_router = APIRouter(prefix="/templates", tags=["Templates"])
 
 @template_router.get("", response_model=dict)
 async def get_all_templates(
-    current_user: CurrentUserDependency,
     template_service: TemplateServiceDependency,
+    current_user: OptionalUserDependency = None,
     include_inactive: bool = False,
     skip: int = 0,
     limit: int = 10,
 ):
     """
     Get all templates with pagination.
-    Regular users only see active templates.
+    Anonymous users and regular users only see active templates.
     Admins can see inactive templates with include_inactive=True.
     """
     from models.user import UserRole
     
     # Only admins can see inactive templates
-    if include_inactive and current_user.role != UserRole.ADMIN:
+    if include_inactive and (not current_user or current_user.role != UserRole.ADMIN):
         include_inactive = False
     
     templates = template_service.get_all_templates(include_inactive=include_inactive)

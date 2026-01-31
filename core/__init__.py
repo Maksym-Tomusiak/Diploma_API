@@ -2,8 +2,10 @@ from core.auth import (
     AuthService,
     AuthServiceDependency,
     CurrentUserDependency,
+    OptionalUserDependency,
     AdminUserDependency,
     get_current_user,
+    get_optional_user,
     require_admin,
 )
 from core.user import UserService, UserServiceDependency
@@ -19,8 +21,10 @@ __all__ = [
     "AuthService",
     "AuthServiceDependency",
     "CurrentUserDependency",
+    "OptionalUserDependency",
     "AdminUserDependency",
     "get_current_user",
+    "get_optional_user",
     "require_admin",
     # Services
     "UserService",

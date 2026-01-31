@@ -77,8 +77,6 @@ class FormatCheckerService:
         font_family_issues: list[TextSegment] = []
         
         for segment in doc_props.text_segments:
-            if segment.is_heading:
-                continue
             if params.skip_first_page and segment.is_on_first_page:
                 continue
             

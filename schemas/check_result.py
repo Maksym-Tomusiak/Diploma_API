@@ -68,3 +68,17 @@ class CheckResultDto(BaseModel):
         )
 
     model_config = SettingsConfigDict(from_attributes=True)
+
+
+class UploadCheckResultDto(BaseModel):
+    """
+    Response model for uploaded file checks.
+    Does not include database IDs since the file is not persisted.
+    """
+    passed: bool
+    overall_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    issues_count: int = Field(..., ge=0)
+    issues: List[Issue] = Field(default_factory=list)
+    processing_time_ms: int = Field(..., ge=0)
+    document_title: Optional[str] = None
+    remaining_anonymous_checks: Optional[int] = None  # Only set for anonymous users

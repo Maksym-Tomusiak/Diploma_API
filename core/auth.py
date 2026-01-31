@@ -239,6 +239,28 @@ async def get_current_user(
 CurrentUserDependency = Annotated[User, Depends(get_current_user)]
 
 
+# Dependency to get optional current user from request (returns None if not authenticated)
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False)),
+    auth_service: AuthServiceDependency = None,
+) -> User | None:
+    """FastAPI dependency to get the current user if authenticated, None otherwise."""
+    if not credentials:
+        return None
+    
+    try:
+        user = auth_service.get_current_user_from_token(credentials.credentials)
+        # Don't allow banned users
+        if getattr(user, "is_banned", False):
+            return None
+        return user
+    except HTTPException:
+        return None
+
+
+OptionalUserDependency = Annotated[User | None, Depends(get_optional_user)]
+
+
 # Dependency to require admin role
 async def require_admin(current_user: CurrentUserDependency) -> User:
     """FastAPI dependency that requires admin role."""
