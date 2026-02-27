@@ -46,9 +46,9 @@ class CheckResult:
 class FormatCheckerService:
     """Service for checking document formatting against templates or custom parameters."""
 
-    FONT_SIZE_TOLERANCE = 0.1
-    MARGIN_TOLERANCE = 0.5
-    LINE_SPACING_TOLERANCE = 0.1
+    FONT_SIZE_TOLERANCE = 0.01
+    MARGIN_TOLERANCE = 0.01
+    LINE_SPACING_TOLERANCE = 0.01
 
     def __init__(self, google_docs_service: GoogleDocsServiceDependency):
         self.google_docs_service = google_docs_service

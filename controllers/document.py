@@ -282,13 +282,16 @@ async def format_uploaded_document(
     )
     
     # Return formatted document as downloadable file
+    # Use RFC 5987 encoding for non-ASCII filenames
+    from urllib.parse import quote
     output_filename = f"formatted_{file.filename}"
+    encoded_filename = quote(output_filename)
     
     return StreamingResponse(
         BytesIO(formatted_content),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={
-            "Content-Disposition": f'attachment; filename="{output_filename}"'
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
         }
     )
 
