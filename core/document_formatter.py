@@ -208,7 +208,8 @@ class DocumentFormatterService:
                 body_content, 
                 params,
                 doc_props,
-                expected_font_family
+                expected_font_family,
+                changes
             )
             if text_requests:
                 requests.extend(text_requests)
@@ -491,6 +492,7 @@ class DocumentFormatterService:
         params: TemplateParams,
         doc_props,  # DocumentProperties from GoogleDocsService
         font_family: Optional[str] = None,
+        changes: list[FormatChange] = None,
     ) -> list[dict]:
         """Build requests to update text formatting, respecting skip_first_page."""
         requests = []
@@ -501,6 +503,8 @@ class DocumentFormatterService:
             if "paragraph" in element:
                 paragraph_index_map[idx] = element["paragraph"]
         
+        structural_requests = []
+        
         # Find all text ranges in the document
         for paragraph_index, element in enumerate(body_content):
             if "paragraph" in element:
@@ -508,94 +512,128 @@ class DocumentFormatterService:
                 para_style = paragraph.get("paragraphStyle", {})
                 named_style = para_style.get("namedStyleType", "NORMAL_TEXT")
                 
-                # Check if this is a heading - headings typically have bold by default
+                # Check if this is a heading
                 is_heading = named_style.startswith("HEADING_")
                 
                 # Check if this paragraph is on the first page
                 is_on_first_page = False
                 if params.skip_first_page:
-                    # Find this paragraph in doc_props.paragraph_line_spacings
                     for pls in doc_props.paragraph_line_spacings:
                         if pls.paragraph_index == paragraph_index:
                             is_on_first_page = pls.is_on_first_page
                             break
-                    
-                    # Skip formatting this paragraph if it's on the first page
                     if is_on_first_page:
                         continue
                 
+                # --- NEW: Image, Caption and Source Formatting ---
+                import re
+                has_image = any("inlineObjectElement" in e for e in paragraph.get("elements", []))
+                full_para_text = "".join(e.get("textRun", {}).get("content", "") for e in paragraph.get("elements", []) if "textRun" in e).strip()
+                caption_match = re.match(r'^(Рис\.|Зоб\.|Рисунок|Фото)\s*', full_para_text)
+                is_source = full_para_text.lower().startswith("джерело:")
+
+                elements = paragraph.get("elements", [])
+                if elements:
+                    para_start_index = elements[0].get("startIndex")
+                    para_end_index = elements[-1].get("endIndex")
+                    
+                    if para_start_index is not None and para_end_index is not None and para_end_index > para_start_index:
+                        # 1. Align Center
+                        if has_image or caption_match or is_source:
+                            if para_style.get("alignment") != "CENTER":
+                                requests.append({
+                                    "updateParagraphStyle": {
+                                        "range": {"startIndex": para_start_index, "endIndex": para_end_index},
+                                        "paragraphStyle": {"alignment": "CENTER"},
+                                        "fields": "alignment",
+                                    }
+                                })
+                                if has_image: changes.append(FormatChange(type="image_alignment", description="Відцентровано зображення"))
+                                elif caption_match: changes.append(FormatChange(type="caption_alignment", description="Відцентровано підпис"))
+                                elif is_source: changes.append(FormatChange(type="source_alignment", description="Відцентровано джерело"))
+
+                        # 2. Fix Caption Format (STORE FOR LATER REVERSE PROCESSING)
+                        if caption_match:
+                            fixed_text = re.sub(
+                                r'^(Рис|Зоб|Рисунок|Фото)\.?\s*(\d+)\s*[\.\,]\s*(\d+)(?:\.[\d\.]+)?\s*[\.\,]?\s*(.*)',
+                                r'\1. \2.\3. \4',
+                                full_para_text
+                            )
+                            if fixed_text != full_para_text:
+                                structural_requests.append({
+                                    "start": para_start_index,
+                                    "end": para_end_index - 1, # Don't delete the trailing \n
+                                    "text": fixed_text
+                                })
+                                changes.append(FormatChange(type="caption_format_fix", description="Виправлено формат номера підпису"))
+
+                        # 3. Format Source Style (Italic)
+                        if is_source:
+                            requests.append({
+                                "updateTextStyle": {
+                                    "range": {"startIndex": para_start_index, "endIndex": para_end_index},
+                                    "textStyle": {"italic": True},
+                                    "fields": "italic",
+                                }
+                            })
+                            changes.append(FormatChange(type="source_style", description="Додано курсив до джерела"))
+
+                # Standard Text Formatting (Font, Size, Spacing)
                 for elem in paragraph.get("elements", []):
                     if "textRun" in elem:
                         start_index = elem.get("startIndex", 0)
                         end_index = elem.get("endIndex", 0)
-                        
                         if end_index > start_index:
-                            # Get existing text style to preserve properties like bold
                             existing_style = elem.get("textRun", {}).get("textStyle", {})
-                            
-                            # Build text style update
-                            text_style = {
-                                "fontSize": {
-                                    "magnitude": params.font_size,
-                                    "unit": "PT"
-                                }
-                            }
+                            text_style = {"fontSize": {"magnitude": params.font_size, "unit": "PT"}}
                             fields = "fontSize"
                             
-                            # Preserve bold - check explicit bold OR if it's a heading with empty style (inherited bold)
                             has_explicit_bold = existing_style.get("bold", False)
-                            has_inherited_bold = is_heading and not existing_style  # Empty style means inherited from heading
-                            
+                            has_inherited_bold = is_heading and not existing_style
                             if has_explicit_bold or has_inherited_bold:
                                 text_style["bold"] = True
                                 fields += ",bold"
                             
                             if font_family:
-                                # Preserve existing weight (bold/normal) when changing font family
                                 existing_weight = existing_style.get("weightedFontFamily", {}).get("weight", 400)
-                                # Headings default to bold weight (700)
-                                if is_heading and not existing_style:
-                                    existing_weight = 700
-                                    
-                                text_style["weightedFontFamily"] = {
-                                    "fontFamily": font_family,
-                                    "weight": existing_weight  # Preserve existing bold/normal
-                                }
+                                if is_heading and not existing_style: existing_weight = 700
+                                text_style["weightedFontFamily"] = {"fontFamily": font_family, "weight": existing_weight}
                                 fields += ",weightedFontFamily"
                             
                             requests.append({
                                 "updateTextStyle": {
-                                    "range": {
-                                        "startIndex": start_index,
-                                        "endIndex": end_index,
-                                    },
-                                    "textStyle": text_style,
-                                    "fields": fields,
+                                    "range": {"startIndex": start_index, "endIndex": end_index},
+                                    "textStyle": text_style, "fields": fields,
                                 }
                             })
                 
-                # Update paragraph line spacing
-                # Get the paragraph's actual start and end indices from its elements
-                elements = paragraph.get("elements", [])
+                # Line Spacing
                 if elements:
-                    # The paragraph's range should include all its elements
                     para_start_index = elements[0].get("startIndex")
                     para_end_index = elements[-1].get("endIndex")
-                    
-                    # Only apply if we have valid indices
                     if para_start_index is not None and para_end_index is not None and para_end_index > para_start_index:
                         requests.append({
                             "updateParagraphStyle": {
-                                "range": {
-                                    "startIndex": para_start_index,
-                                    "endIndex": para_end_index,
-                                },
-                                "paragraphStyle": {
-                                    "lineSpacing": params.line_spacing * 100,  # API uses percentage
-                                },
+                                "range": {"startIndex": para_start_index, "endIndex": para_end_index},
+                                "paragraphStyle": {"lineSpacing": params.line_spacing * 100},
                                 "fields": "lineSpacing",
                             }
                         })
+        
+        # ADD STRUCTURAL CHANGES IN REVERSE ORDER TO PREVENT INDEX SHIFTING
+        structural_requests.sort(key=lambda x: x["start"], reverse=True)
+        for req in structural_requests:
+            requests.append({
+                "deleteContentRange": {
+                    "range": {"startIndex": req["start"], "endIndex": req["end"]}
+                }
+            })
+            requests.append({
+                "insertText": {
+                    "location": {"index": req["start"]},
+                    "text": req["text"]
+                }
+            })
         
         return requests
 

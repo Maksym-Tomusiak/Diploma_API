@@ -56,8 +56,7 @@ async def check_uploaded_document(
     remaining_checks = None
     if not current_user:
         # Anonymous user - apply rate limiting
-        ip_address = request.client.host if request.client else "unknown"
-        rate_info = rate_limit_service.check_and_increment_anonymous_limit(ip_address)
+        rate_info = rate_limit_service.check_and_increment_anonymous_limit(request)
         remaining_checks = rate_info["remaining_checks"]
     else:
         # Authenticated user - check for banned status

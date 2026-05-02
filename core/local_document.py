@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from lxml import etree
 import time
+import zipfile
 
 from docx import Document
 from docx.shared import Pt
@@ -76,6 +77,20 @@ class ParagraphLineSpacing:
 
 
 @dataclass
+class LocalImageInfo:
+    paragraph_index: int
+    alignment: str  # 'center', 'left', 'right', 'justify', 'unknown'
+    is_on_first_page: bool
+
+@dataclass
+class ParagraphAlignment:
+    paragraph_index: int
+    alignment: str
+    text: str
+    is_italic: bool
+    is_on_first_page: bool
+
+@dataclass
 class LocalDocumentProperties:
     """Properties extracted from a local document."""
     title: str
@@ -88,13 +103,16 @@ class LocalDocumentProperties:
     page_number_start: int = 1
     # First page different (skip first page for numbering/headers)
     first_page_different: bool = False
+    # Image and alignment info
+    images: list[LocalImageInfo] = field(default_factory=list)
+    alignments: list[ParagraphAlignment] = field(default_factory=list)
 
 
 class LocalDocumentService:
     """Service for working with local .docx files."""
 
     FONT_SIZE_TOLERANCE = 0.01
-    MARGIN_TOLERANCE = 0.01  # inches (approx 0.25mm - allows for floating-point precision)
+    MARGIN_TOLERANCE = 0.02  # inches (approx 0.5mm - allows for floating-point precision)
     LINE_SPACING_TOLERANCE = 0.01
 
     def _extract_font_from_rPr(self, rPr, theme_map: dict[str, str]) -> str | None:
@@ -203,7 +221,7 @@ class LocalDocumentService:
             
         return defaults_map
 
-    def _resolve_font_family(self, run, paragraph, theme_map, doc_defaults) -> str:
+    def _resolve_font_family(self, run, paragraph, theme_map, doc_defaults, expected_font_family: Optional[str] = None) -> str:
         """
         Resolves font family following strict inheritance hierarchy.
         """
@@ -265,8 +283,30 @@ class LocalDocumentService:
         if 'default_font' in doc_defaults:
             return doc_defaults['default_font']
 
-        # 6. Final Fallback
+        # 6. FINAL FALLBACK (ЗМІНЕНО ТУТ)
+        # Якщо Google Docs взагалі не вказав шрифт, 
+        # ми довіряємо expected_font_family (якщо він переданий), 
+        # інакше беремо з теми документа.
+        if expected_font_family:
+            return expected_font_family
+            
         return theme_map.get('minorHAnsi', 'Arial')
+    
+    def _resolve_line_spacing(self, paragraph) -> float:
+        """Resolves line spacing, checking paragraph and style hierarchy."""
+        if paragraph.paragraph_format.line_spacing is not None:
+            spacing = paragraph.paragraph_format.line_spacing
+            return float(spacing) if isinstance(spacing, (int, float)) else 1.0
+        
+        # Check style hierarchy
+        style = paragraph.style
+        while style:
+            if style.paragraph_format.line_spacing is not None:
+                spacing = style.paragraph_format.line_spacing
+                return float(spacing) if isinstance(spacing, (int, float)) else 1.0
+            style = getattr(style, 'base_style', None)
+            
+        return 1.15 # Standard Word/Docs default
 
     def _contains_page_number(self, section) -> bool:
         """Check if section headers/footers contain page number fields."""
@@ -340,7 +380,7 @@ class LocalDocumentService:
             
         return theme_map
 
-    def extract_document_properties(self, file_content: bytes) -> LocalDocumentProperties:
+    def extract_document_properties(self, file_content: bytes, expected_font_family: Optional[str] = None) -> LocalDocumentProperties:
         """
         Extract formatting properties from a .docx file.
 
@@ -350,6 +390,7 @@ class LocalDocumentService:
         Returns:
             LocalDocumentProperties with extracted formatting information
         """
+
         doc = Document(BytesIO(file_content))
 
         theme_fonts_map = self._get_document_theme_fonts(doc)
@@ -361,6 +402,8 @@ class LocalDocumentService:
 
         text_segments = []
         paragraph_line_spacings = []
+        images = []
+        alignments = []
 
         # Get page dimensions for first page detection
         section = doc.sections[0] if doc.sections else None
@@ -446,14 +489,61 @@ class LocalDocumentService:
             # ----------------------------------------
 
             # Track line spacing for paragraph (after is_on_first_page is determined)
-            if paragraph.paragraph_format.line_spacing is not None:
-                spacing = paragraph.paragraph_format.line_spacing
-                if isinstance(spacing, (int, float)):
-                    paragraph_line_spacings.append(ParagraphLineSpacing(
-                        line_spacing=float(spacing),
-                        paragraph_index=para_idx,
-                        is_on_first_page=is_on_first_page,
-                    ))
+            spacing = self._resolve_line_spacing(paragraph)
+            paragraph_line_spacings.append(ParagraphLineSpacing(
+                line_spacing=spacing,
+                paragraph_index=para_idx,
+                is_on_first_page=is_on_first_page,
+            ))
+
+            # --- NEW: Image Detection ---
+            has_image = False
+            # Check for drawings in paragraph XML
+            if paragraph._element.find(qn('w:drawing')) is not None or \
+               paragraph._element.find(qn('w:pict')) is not None:
+                has_image = True
+            
+            # Also check runs for drawings (more reliable for inline images)
+            if not has_image:
+                for run in paragraph.runs:
+                    if run._element.find(qn('w:drawing')) is not None or \
+                       run._element.find(qn('w:pict')) is not None:
+                        has_image = True
+                        break
+            
+            # Resolve paragraph alignment
+            alignment = "unknown"
+            if paragraph.alignment is not None:
+                from docx.enum.text import WD_ALIGN_PARAGRAPH
+                if paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER: alignment = "center"
+                elif paragraph.alignment == WD_ALIGN_PARAGRAPH.JUSTIFY: alignment = "justify"
+                elif paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT: alignment = "left"
+                elif paragraph.alignment == WD_ALIGN_PARAGRAPH.RIGHT: alignment = "right"
+            elif paragraph.style and hasattr(paragraph.style, 'paragraph_format'):
+                # Check style alignment
+                style_align = paragraph.style.paragraph_format.alignment
+                from docx.enum.text import WD_ALIGN_PARAGRAPH
+                if style_align == WD_ALIGN_PARAGRAPH.CENTER: alignment = "center"
+                elif style_align == WD_ALIGN_PARAGRAPH.JUSTIFY: alignment = "justify"
+                elif style_align == WD_ALIGN_PARAGRAPH.LEFT: alignment = "left"
+                elif style_align == WD_ALIGN_PARAGRAPH.RIGHT: alignment = "right"
+
+            if has_image:
+                images.append(LocalImageInfo(
+                    paragraph_index=para_idx,
+                    alignment=alignment,
+                    is_on_first_page=is_on_first_page
+                ))
+            
+            # Store alignment info for all paragraphs to check captions/sources
+            is_italic = any(run.font.italic for run in paragraph.runs if run.text.strip())
+            alignments.append(ParagraphAlignment(
+                paragraph_index=para_idx,
+                alignment=alignment,
+                text=paragraph.text.strip(),
+                is_italic=is_italic,
+                is_on_first_page=is_on_first_page
+            ))
 
             # Extract runs (text segments with consistent formatting)
             for run in paragraph.runs:
@@ -465,7 +555,7 @@ class LocalDocumentService:
                 if run.font.size:
                     font_size = run.font.size.pt
 
-                font_family = self._resolve_font_family(run, paragraph, theme_fonts_map, doc_defaults)
+                font_family = self._resolve_font_family(run, paragraph, theme_fonts_map, doc_defaults, expected_font_family)
 
                 segment = LocalTextSegment(
                     content=run.text,
@@ -533,6 +623,8 @@ class LocalDocumentService:
             has_page_numbers=has_page_numbers,
             page_number_start=page_number_start,
             first_page_different=first_page_different,
+            images=images,
+            alignments=alignments
         )
 
     def debug_google_docs_xml(self, file_content: bytes):
@@ -594,7 +686,7 @@ class LocalDocumentService:
 
         #self.debug_google_docs_xml(file_content)
 
-        doc_props = self.extract_document_properties(file_content)
+        doc_props = self.extract_document_properties(file_content, expected_font_family)
 
         # Font Size & Family Checks
         font_size_issues: list[LocalTextSegment] = []
@@ -708,6 +800,104 @@ class LocalDocumentService:
                             details=f"{margin_name.capitalize()} margin is {actual_mm:.1f}mm (expected {expected_mm:.1f}mm)",
                             expected=f"{expected_mm:.1f}mm",
                             actual=f"{actual_mm:.1f}mm",
+                        ))
+
+        # Image and Caption Checks
+        import re
+        # Strict pattern for Рис. X.X. (exactly two numbers)
+        caption_pattern = re.compile(r'^(Рис\.|Зоб\.|Фото|Рисунок)\s+\d+\.\d+\.?\s+.+')
+        
+        for img in doc_props.images:
+            if params.skip_first_page and img.is_on_first_page:
+                continue
+                
+            # 1. Image alignment
+            if img.alignment != 'center':
+                # Try to get caption for better identification
+                caption_para = next((a for a in doc_props.alignments if a.paragraph_index == img.paragraph_index + 1), None)
+                img_ref = "Зображення"
+                if caption_para and caption_para.text:
+                    # Extract the first part like "Рис. 1.1."
+                    match = re.match(r'^(Рис\.|Зоб\.|Рисунок|Фото)\s+\d+\.\d+\.?\s*', caption_para.text)
+                    if match:
+                        img_ref = match.group(0).strip()
+                    else:
+                        img_ref = f"Зображення '{caption_para.text[:20]}...'"
+
+                issues.append(FormatIssue(
+                    type="image_alignment_error",
+                    severity="medium",
+                    details=f"{img_ref} має бути вирівняно по центру",
+                    expected="center",
+                    actual=img.alignment
+                ))
+            
+            # 2. Check for caption (next paragraph)
+            caption_para = next((a for a in doc_props.alignments if a.paragraph_index == img.paragraph_index + 1), None)
+            if not caption_para or not caption_para.text:
+                issues.append(FormatIssue(
+                    type="image_caption_missing",
+                    severity="high",
+                    details=f"Відсутній підпис під зображенням у параграфі {img.paragraph_index + 2}",
+                    expected="Рис. X.X. Назва",
+                    actual="порожньо"
+                ))
+            else:
+                # Check format
+                if not caption_pattern.match(caption_para.text):
+                    issues.append(FormatIssue(
+                        type="image_caption_format_error",
+                        severity="low",
+                        details=f"Неправильний формат підпису: '{caption_para.text[:30]}...'. Очікується: 'Рис. X.X. Опис'",
+                        expected="Рис. X.X. Назва",
+                        actual=caption_para.text[:30]
+                    ))
+                
+                # Check alignment
+                if caption_para.alignment != "center":
+                    issues.append(FormatIssue(
+                        type="image_caption_alignment_error",
+                        severity="low",
+                        details=f"Підпис під зображенням '{caption_para.text[:20]}' має бути відцентрований",
+                        expected="center",
+                        actual=caption_para.alignment
+                    ))
+
+                # 3. Check for source (paragraph after caption)
+                source_para = next((a for a in doc_props.alignments if a.paragraph_index == img.paragraph_index + 2), None)
+                if not source_para or not source_para.text:
+                    issues.append(FormatIssue(
+                        type="image_source_missing",
+                        severity="medium",
+                        details=f"Відсутнє джерело під зображенням '{caption_para.text[:20]}...'",
+                        expected="Джерело: розроблено автором (або інше)",
+                        actual="порожньо"
+                    ))
+                elif not source_para.text.lower().startswith("джерело:"):
+                    issues.append(FormatIssue(
+                        type="image_source_format_error",
+                        severity="low",
+                        details=f"Неправильний формат джерела: '{source_para.text[:30]}...'. Очікується: 'Джерело: опис'",
+                        expected="Джерело: ...",
+                        actual=source_para.text[:30]
+                    ))
+                else:
+                    # If it exists and starts with "Джерело:", check alignment and style
+                    if source_para.alignment != "center":
+                        issues.append(FormatIssue(
+                            type="image_source_alignment_error",
+                            severity="low",
+                            details=f"Рядок джерела '{source_para.text[:20]}' має бути відцентрований",
+                            expected="center",
+                            actual=source_para.alignment
+                        ))
+                    if not source_para.is_italic:
+                        issues.append(FormatIssue(
+                            type="image_source_style_error",
+                            severity="low",
+                            details=f"Рядок джерела '{source_para.text[:20]}' має бути написаний курсивом",
+                            expected="italic",
+                            actual="normal"
                         ))
 
         # Page Numbering Checks
@@ -930,7 +1120,7 @@ class LocalDocumentService:
                 # Apply font family
                 if expected_font_family:
                     # 1. Use the robust resolver to check the REAL current font
-                    old_font = self._resolve_font_family(run, paragraph, theme_fonts_map, doc_defaults)
+                    old_font = self._resolve_font_family(run, paragraph, theme_fonts_map, doc_defaults, expected_font_family)
                     
                     if old_font.lower() != expected_font_family.lower():
                         # 2. Set the python-docx property (Updates w:ascii mostly)
@@ -961,6 +1151,88 @@ class LocalDocumentService:
                             before=old_font,
                             after=expected_font_family,
                         ))
+            
+            # --- NEW: Image, Caption and Source Formatting ---
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            
+            # Check for image in this paragraph
+            has_image = False
+            if paragraph._element.find(qn('w:drawing')) is not None or \
+               paragraph._element.find(qn('w:pict')) is not None:
+                has_image = True
+            if not has_image:
+                for run in paragraph.runs:
+                    if run._element.find(qn('w:drawing')) is not None or \
+                       run._element.find(qn('w:pict')) is not None:
+                        has_image = True
+                        break
+            
+            # 1. Format Image Paragraph
+            if has_image:
+                if paragraph.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+                    old_align = str(paragraph.alignment)
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    changes.append(FormatChange(
+                        type="image_alignment",
+                        description="Відцентровано зображення",
+                        before=old_align,
+                        after="center"
+                    ))
+            
+            # 2. Format Caption Paragraph (Рис. X.X.)
+            import re
+            # Check for general caption-like start
+            general_match = re.match(r'^(Рис\.|Зоб\.|Рисунок|Фото)\s*', paragraph.text.strip())
+            if general_match:
+                text = paragraph.text.strip()
+                # Try to fix numbering format to exactly num.num
+                # This pattern catches the first two numbers and ignores any subsequent ones (like .1.1)
+                fixed_text = re.sub(
+                    r'^(Рис|Зоб|Рисунок|Фото)\.?\s*(\d+)\s*[\.\,]\s*(\d+)(?:\.[\d\.]+)?\s*[\.\,]?\s*(.*)',
+                    r'\1. \2.\3. \4',
+                    text
+                )
+                
+                if fixed_text != text:
+                    paragraph.text = fixed_text
+                    changes.append(FormatChange(
+                        type="caption_format_fix",
+                        description="Виправлено формат номера підпису",
+                        before=text[:30],
+                        after=fixed_text[:30]
+                    ))
+
+                if paragraph.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    changes.append(FormatChange(
+                        type="caption_alignment",
+                        description=f"Відцентровано підпис",
+                        before="unset",
+                        after="center"
+                    ))
+            
+            # 3. Format Source Paragraph (Джерело:)
+            if paragraph.text.strip().lower().startswith("джерело:"):
+                # Align center
+                if paragraph.alignment != WD_ALIGN_PARAGRAPH.CENTER:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    changes.append(FormatChange(
+                        type="source_alignment",
+                        description="Відцентровано рядок джерела",
+                        before="unset",
+                        after="center"
+                    ))
+                # Set Italic
+                for run in paragraph.runs:
+                    if run.text.strip() and not run.font.italic:
+                        run.font.italic = True
+                        changes.append(FormatChange(
+                            type="source_style",
+                            description="Додано курсив до джерела",
+                            before="normal",
+                            after="italic"
+                        ))
+                        break # Only need to log once per paragraph
         
         # Apply margins
         if doc.sections:

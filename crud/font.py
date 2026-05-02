@@ -51,6 +51,15 @@ class FontRepository:
         result = self.session.execute(select(Font).where(Font.family == family))
         return result.scalar_one_or_none()
 
+    def delete_font(self, font_id: int) -> bool:
+        """Delete a font by ID"""
+        font = self.get_font_by_id(font_id)
+        if font:
+            self.session.delete(font)
+            self.session.commit()
+            return True
+        return False
+
     def count_fonts(self, search: Optional[str] = None) -> int:
         """Count total number of fonts with optional search filter"""
         query = select(Font)

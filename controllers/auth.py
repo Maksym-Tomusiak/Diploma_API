@@ -2,11 +2,26 @@ from fastapi import APIRouter, Request, HTTPException, status, Response
 from fastapi.responses import RedirectResponse
 
 from common.app_settings import settings
-from core import AuthServiceDependency, CurrentUserDependency, UserActionLogServiceDependency
+from core import AuthServiceDependency, CurrentUserDependency, UserActionLogServiceDependency, RateLimitServiceDependency
+
+
+
 from schemas.auth import TokenResponse, RefreshTokenRequest, GoogleAuthUrl
 from schemas.user import UserDto
 
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+@auth_router.get("/remaining-checks")
+async def get_remaining_checks(
+    request: Request,
+    rate_limit_service: RateLimitServiceDependency,
+):
+    """
+    Get the number of remaining free checks for an anonymous user today.
+    """
+    remaining = rate_limit_service.get_remaining_checks(request)
+    return {"remaining_checks": remaining}
 
 
 @auth_router.get("/login", response_model=GoogleAuthUrl)
@@ -40,7 +55,7 @@ async def auth_callback(
             # Scope change detected - user needs to revoke and re-grant access
             error_message = (
                 "App permissions have been updated. "
-                "Please visit https://myaccount.google.com/permissions and remove 'FormatStand' access, "
+                "Please visit https://myaccount.google.com/permissions and remove 'Norma' access, "
                 "then try logging in again."
             )
         return RedirectResponse(

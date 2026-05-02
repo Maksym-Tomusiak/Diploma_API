@@ -15,6 +15,7 @@ from core.check_result import CheckResultService, CheckResultServiceDependency
 from core.user_action_log import UserActionLogService, UserActionLogServiceDependency
 from core.google_docs import GoogleDocsService, GoogleDocsServiceDependency
 from core.format_checker import FormatCheckerService, FormatCheckerServiceDependency
+from core.rate_limit import RateLimitService, RateLimitServiceDependency
 
 __all__ = [
     # Auth
@@ -41,4 +42,6 @@ __all__ = [
     "GoogleDocsServiceDependency",
     "FormatCheckerService",
     "FormatCheckerServiceDependency",
+    "RateLimitService",
+    "RateLimitServiceDependency",
 ]

@@ -47,7 +47,7 @@ class FormatCheckerService:
     """Service for checking document formatting against templates or custom parameters."""
 
     FONT_SIZE_TOLERANCE = 0.01
-    MARGIN_TOLERANCE = 0.01
+    MARGIN_TOLERANCE = 0.1
     LINE_SPACING_TOLERANCE = 0.01
 
     def __init__(self, google_docs_service: GoogleDocsServiceDependency):
@@ -106,7 +106,7 @@ class FormatCheckerService:
                 issues.append(FormatIssue(
                     type="font_size_mismatch",
                     severity="high" if abs(actual_size - params.font_size) > 2 else "medium",
-                    details=f"Found {total_chars_this_size} characters with font size {actual_size:.1f}pt (expected {params.font_size}pt). Examples: {excerpt_text}",
+                    details=f"Знайдено {total_chars_this_size} символів з розміром шрифту {actual_size:.1f}pt (очікувалося {params.font_size}pt). Приклади: {excerpt_text}",
                     expected=f"{params.font_size}pt",
                     actual=f"{actual_size:.1f}pt",
                 ))
@@ -127,7 +127,7 @@ class FormatCheckerService:
                 issues.append(FormatIssue(
                     type="font_family_mismatch",
                     severity="high",
-                    details=f"Found {total_chars_this_font} characters with font '{actual_font}' (expected '{expected_font_family}'). Examples: {excerpt_text}",
+                    details=f"Знайдено {total_chars_this_font} символів зі шрифтом '{actual_font}' (очікувалося '{expected_font_family}'). Приклади: {excerpt_text}",
                     expected=expected_font_family,
                     actual=actual_font,
                 ))
@@ -136,7 +136,7 @@ class FormatCheckerService:
             issues.append(FormatIssue(
                 type="no_text_found",
                 severity="low",
-                details="No text content found in document",
+                details="У документі не знайдено текстового вмісту",
             ))
         
         # --- Line Spacing Checks (Unchanged) ---
@@ -154,7 +154,7 @@ class FormatCheckerService:
                 issues.append(FormatIssue(
                     type="line_spacing_mismatch",
                     severity="medium",
-                    details=f"Found {count} paragraph(s) with line spacing {actual_spacing:.2f} (expected {params.line_spacing})",
+                    details=f"Знайдено {count} абзац(ів) з міжрядковим інтервалом {actual_spacing:.2f} (очікувалося {params.line_spacing})",
                     expected=f"{params.line_spacing}",
                     actual=f"{actual_spacing:.2f}",
                 ))
@@ -165,15 +165,114 @@ class FormatCheckerService:
         self._check_margin(issues, "left", doc_props.margin_left_mm(), params.margins.left)
         self._check_margin(issues, "right", doc_props.margin_right_mm(), params.margins.right)
         
+        # --- Image and Caption Checks ---
+        import re
+        # Strict pattern for Рис. X.X. (exactly two numbers)
+        caption_pattern = re.compile(r'^(Рис\.|Зоб\.|Фото|Рисунок)\s+\d+\.\d+\.?\s+.+')
+        
+        for img in doc_props.images:
+            if params.skip_first_page and img.is_on_first_page:
+                continue
+                
+            # 1. Image alignment
+            if img.alignment != 'CENTER':
+                # Try to get caption for better identification
+                caption_para = next((a for a in doc_props.alignments if a.paragraph_index == img.paragraph_index + 1), None)
+                img_ref = "Зображення"
+                if caption_para and caption_para.text:
+                    # Extract the first part like "Рис. 1.1."
+                    match = re.match(r'^(Рис\.|Зоб\.|Рисунок|Фото)\s+\d+\.\d+\.?\s*', caption_para.text)
+                    if match:
+                        img_ref = match.group(0).strip()
+                    else:
+                        img_ref = f"Зображення '{caption_para.text[:20]}...'"
+
+                issues.append(FormatIssue(
+                    type="image_alignment_error",
+                    severity="medium",
+                    details=f"{img_ref} має бути вирівняно по центру",
+                    expected="CENTER",
+                    actual=img.alignment
+                ))
+            
+            # 2. Check for caption (next paragraph)
+            caption_para = next((a for a in doc_props.alignments if a.paragraph_index == img.paragraph_index + 1), None)
+            if not caption_para or not caption_para.text:
+                issues.append(FormatIssue(
+                    type="image_caption_missing",
+                    severity="high",
+                    details=f"Відсутній підпис під зображенням у параграфі {img.paragraph_index + 2}",
+                    expected="Рис. X.X. Назва",
+                    actual="порожньо"
+                ))
+            else:
+                # Check format
+                if not caption_pattern.match(caption_para.text):
+                    issues.append(FormatIssue(
+                        type="image_caption_format_error",
+                        severity="low",
+                        details=f"Неправильний формат підпису: '{caption_para.text[:30]}...'. Очікується: 'Рис. X.X. Опис'",
+                        expected="Рис. X.X. Назва",
+                        actual=caption_para.text[:30]
+                    ))
+                
+                # Check alignment
+                if caption_para.alignment != "CENTER":
+                    issues.append(FormatIssue(
+                        type="image_caption_alignment_error",
+                        severity="low",
+                        details=f"Підпис під зображенням '{caption_para.text[:20]}' має бути відцентрований",
+                        expected="CENTER",
+                        actual=caption_para.alignment
+                    ))
+
+                # 3. Check for source (paragraph after caption)
+                source_para = next((a for a in doc_props.alignments if a.paragraph_index == img.paragraph_index + 2), None)
+                if not source_para or not source_para.text:
+                    issues.append(FormatIssue(
+                        type="image_source_missing",
+                        severity="medium",
+                        details=f"Відсутнє джерело під зображенням '{caption_para.text[:20]}...'",
+                        expected="Джерело: розроблено автором (або інше)",
+                        actual="порожньо"
+                    ))
+                elif not source_para.text.lower().startswith("джерело:"):
+                    issues.append(FormatIssue(
+                        type="image_source_format_error",
+                        severity="low",
+                        details=f"Неправильний формат джерела: '{source_para.text[:30]}...'. Очікується: 'Джерело: опис'",
+                        expected="Джерело: ...",
+                        actual=source_para.text[:30]
+                    ))
+                else:
+                    # Check alignment
+                    if source_para.alignment != "CENTER":
+                        issues.append(FormatIssue(
+                            type="image_source_alignment_error",
+                            severity="low",
+                            details=f"Рядок джерела '{source_para.text[:20]}' має бути відцентрований",
+                            expected="CENTER",
+                            actual=source_para.alignment
+                        ))
+                    # Check italic
+                    if not source_para.is_italic:
+                        issues.append(FormatIssue(
+                            type="image_source_style_error",
+                            severity="low",
+                            details=f"Рядок джерела '{source_para.text[:20]}' має бути написаний курсивом",
+                            expected="italic",
+                            actual="normal"
+                        ))
+        
         # --- Page Numbering Checks (Updated) ---
         if params.check_numbering:
             if not doc_props.has_page_numbers:
                 issues.append(FormatIssue(
                     type="page_numbering_missing",
                     severity="medium",
-                    details="Document does not have page numbers, but they are required",
-                    expected="Page numbers enabled",
-                    actual="No page numbers found",
+                    details="У документі відсутня нумерація сторінок, хоча вона є обов'язковою",
+                    expected="Нумерація сторінок увімкнена",
+                    actual="Нумерацію не знайдено",
                 ))
             else:
                 expected_start = params.start_from_number
@@ -194,7 +293,7 @@ class FormatCheckerService:
                             issues.append(FormatIssue(
                                 type="page_number_start_mismatch",
                                 severity="medium",
-                                details=f"First numbered page (page 2) shows number {visual_actual}, but expected {visual_expected}. In Google Docs, go to Insert > Page numbers > More options, and set 'Start at' to {expected_start}",
+                                details=f"На першій пронумерованій сторінці (стор. 2) відображається номер {visual_actual}, а очікувався {visual_expected}. У Google Docs перейдіть у Вставка > Номери сторінок > Додаткові параметри та встановіть 'Почати з' на {expected_start}",
                                 expected=str(visual_expected),
                                 actual=str(visual_actual),
                             ))
@@ -204,9 +303,9 @@ class FormatCheckerService:
                         issues.append(FormatIssue(
                             type="page_numbering_on_first_page",
                             severity="high",
-                            details=f"Page 1 shows number {actual_start}, but should have no number (skip first page is enabled). Enable 'Different first page' in Google Docs layout settings.",
-                            expected=f"Page 1: no number, Page 2: number {expected_start + 1}",
-                            actual=f"Page 1: number {actual_start}",
+                            details=f"На 1-й сторінці відображається номер {actual_start}, але вона не повинна бути пронумерована (увімкнено пропуск першої сторінки). Увімкніть 'Окрема перша сторінка' у налаштуваннях макета Google Docs.",
+                            expected=f"Стор 1: без номера, Стор 2: номер {expected_start + 1}",
+                            actual=f"Стор 1: номер {actual_start}",
                         ))
                 
                 # Case 2: Skip first page is DISABLED (Validation for Page 1)
@@ -215,7 +314,7 @@ class FormatCheckerService:
                         issues.append(FormatIssue(
                             type="page_number_start_mismatch",
                             severity="low",
-                            details=f"Page numbering starts at {actual_start}, expected {expected_start}",
+                            details=f"Нумерація сторінок починається з {actual_start}, очікувалося з {expected_start}",
                             expected=str(expected_start),
                             actual=str(actual_start),
                         ))
@@ -226,9 +325,9 @@ class FormatCheckerService:
                 issues.append(FormatIssue(
                     type="first_page_not_different",
                     severity="high",
-                    details="First page should be different (skip first page is enabled) but document doesn't have this setting. In Google Docs, go to Format > Page setup, then enable 'Different first page'.",
-                    expected="First page header/footer different",
-                    actual="First page uses same header/footer",
+                    details="Перша сторінка має бути окремою (увімкнено пропуск першої сторінки), але в документі це не налаштовано. У Google Docs перейдіть у Формат > Налаштування сторінки та увімкніть 'Окрема перша сторінка'.",
+                    expected="Верхній/нижній колонтитул першої сторінки відрізняється",
+                    actual="Перша сторінка використовує той самий колонтитул",
                 ))
         else:
             # Logic Fix for Problem 2:
@@ -238,9 +337,9 @@ class FormatCheckerService:
                 issues.append(FormatIssue(
                     type="first_page_should_not_be_different",
                     severity="medium",
-                    details="First page is set to be different ('Different first page' is enabled). This often hides page numbering on the first page. Please disable 'Different first page' to ensure numbering starts on Page 1.",
-                    expected="First page uses same header/footer",
-                    actual="First page is different",
+                    details="Перша сторінка встановлена як окрема (увімкнено 'Окрема перша сторінка'). Це часто приховує нумерацію на першій сторінці. Будь ласка, вимкніть 'Окрема перша сторінка', щоб нумерація починалася з 1-ї сторінки.",
+                    expected="Перша сторінка використовує той самий колонтитул",
+                    actual="Перша сторінка відрізняється",
                 ))
 
         # Calculate score
@@ -273,14 +372,22 @@ class FormatCheckerService:
         actual_mm: float,
         expected_mm: float,
     ) -> None:
+        margin_translations = {
+            "top": "Верхнє поле",
+            "bottom": "Нижнє поле",
+            "left": "Ліве поле",
+            "right": "Праве поле"
+        }
+        translated_name = margin_translations.get(margin_name, margin_name.capitalize())
+        
         margin_diff = abs(actual_mm - expected_mm)
         if margin_diff > self.MARGIN_TOLERANCE:
             issues.append(FormatIssue(
                 type=f"margin_{margin_name}_mismatch",
                 severity="medium" if margin_diff > 5 else "low",
-                details=f"{margin_name.capitalize()} margin ({actual_mm:.1f}mm) does not match expected ({expected_mm}mm)",
-                expected=f"{expected_mm}mm",
-                actual=f"{actual_mm:.1f}mm",
+                details=f"{translated_name} ({actual_mm:.1f}мм) не відповідає очікуваному значенню ({expected_mm}мм)",
+                expected=f"{expected_mm}мм",
+                actual=f"{actual_mm:.1f}мм",
             ))
 
 

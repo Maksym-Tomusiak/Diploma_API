@@ -4,6 +4,9 @@ from fastapi.exceptions import RequestValidationError
 from starlette.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+from core.cleanup import cleanup_old_logs
 
 from controllers import (
     auth_router,
@@ -37,10 +40,24 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error during startup font seeding: {e}")
     
+    try:
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(cleanup_old_logs, args=[30])
+        trigger = CronTrigger(day_of_week='mon', hour=3, minute=0)
+        scheduler.add_job(cleanup_old_logs, trigger=trigger, args=[30])
+        scheduler.start()
+        logger.info("Log cleanup scheduler started (Mondays at 3:00 AM + run on start)")
+        app.state.scheduler = scheduler
+    except Exception as e:
+        logger.error(f"Failed to start scheduler: {e}")
+    
     yield
     
     # Shutdown
     logger.info("Shutting down application...")
+    if hasattr(app.state, 'scheduler'):
+        app.state.scheduler.shutdown()
+        logger.info("Scheduler shut down.")
 
 
 app = FastAPI(

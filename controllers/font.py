@@ -3,11 +3,34 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from db import get_db
-from schemas.font import FontDto, FontListResponse, FontSeedResponse
+from schemas.font import FontDto, FontListResponse, FontSeedResponse, FontCreate
 from crud.font import FontRepositoryDependency
+from core import AdminUserDependency
 
 
 router = APIRouter(prefix="/fonts", tags=["fonts"])
+
+
+@router.post("/", response_model=FontDto, summary="Create font manually")
+def create_font(
+    font_data: FontCreate,
+    admin_user: AdminUserDependency,
+    font_repository: FontRepositoryDependency = None
+):
+    """Create a new font manually"""
+    # Check if font already exists
+    existing_font = font_repository.get_font_by_family(font_data.family)
+    if existing_font:
+        raise HTTPException(status_code=400, detail="Font with this family name already exists")
+    
+    return font_repository.create_font(
+        family=font_data.family,
+        category=font_data.category,
+        variants=font_data.variants,
+        subsets=font_data.subsets,
+        version=font_data.version,
+        last_modified=font_data.last_modified
+    )
 
 
 @router.get("/", summary="Get all fonts")
@@ -55,6 +78,7 @@ def get_font_by_family(
 
 @router.post("/seed", response_model=FontSeedResponse)
 def seed_fonts(
+    admin_user: AdminUserDependency,
     font_repository: FontRepositoryDependency = None
 ):
     """
@@ -71,3 +95,16 @@ def seed_fonts(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{font_id}", summary="Delete font")
+def delete_font(
+    font_id: int,
+    admin_user: AdminUserDependency,
+    font_repository: FontRepositoryDependency = None
+):
+    """Delete a font by ID (admin only)"""
+    success = font_repository.delete_font(font_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Font not found")
+    return {"success": True, "message": "Font deleted successfully"}

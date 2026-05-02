@@ -5,6 +5,16 @@ from typing import Optional
 from models.font import Font
 
 
+class FontCreate(BaseModel):
+    """Schema for creating a font manually"""
+    family: str = Field(..., min_length=1, max_length=255)
+    category: Optional[str] = None
+    variants: Optional[str] = "regular"
+    subsets: Optional[str] = "latin"
+    version: Optional[str] = "v1"
+    last_modified: Optional[str] = None
+
+
 class FontDto(BaseModel):
     """Font data transfer object"""
     id: int = Field(..., gt=0)

@@ -33,6 +33,19 @@ class ParagraphLineSpacing:
     line_spacing: float
     is_on_first_page: bool = True
 
+@dataclass
+class ImageInfo:
+    paragraph_index: int
+    alignment: str  # 'CENTER', 'START', 'END', 'JUSTIFIED', 'UNKNOWN'
+    is_on_first_page: bool
+
+@dataclass
+class ParagraphAlignment:
+    paragraph_index: int
+    alignment: str
+    text: str
+    is_italic: bool
+    is_on_first_page: bool
 
 @dataclass
 class DocumentProperties:
@@ -59,6 +72,9 @@ class DocumentProperties:
     fallback_font_size_pt: Optional[float] = None
     # First page break tracking (paragraph index where first page break occurs)
     first_page_break_index: Optional[int] = None
+    # Image and alignment info
+    images: list[ImageInfo] = field(default_factory=list)
+    alignments: list[ParagraphAlignment] = field(default_factory=list)
     
     @property
     def line_spacing_values(self) -> list[float]:
@@ -219,6 +235,8 @@ class GoogleDocsService:
         # Collect ALL text segments with their individual styles
         text_segments: list[TextSegment] = []
         paragraph_line_spacings: list[ParagraphLineSpacing] = []
+        images: list[ImageInfo] = []
+        alignments: list[ParagraphAlignment] = []
         
         # Track first page break for skip_first_page functionality
         first_page_break_index: Optional[int] = None
@@ -336,6 +354,42 @@ class GoogleDocsService:
                     line_spacing=line_spacing,
                     is_on_first_page=is_on_first_page,
                 ))
+
+                # --- NEW: Image Detection and Alignment ---
+                has_image = False
+                for elem in paragraph.get("elements", []):
+                    if "inlineObjectElement" in elem:
+                        has_image = True
+                        break
+                
+                # Resolve alignment
+                alignment = para_style.get("alignment", "START")
+                
+                if has_image:
+                    images.append(ImageInfo(
+                        paragraph_index=paragraph_index,
+                        alignment=alignment,
+                        is_on_first_page=is_on_first_page
+                    ))
+                
+                # Store alignment info for captions/sources
+                full_text = ""
+                is_italic = False
+                for elem in paragraph.get("elements", []):
+                    if "textRun" in elem:
+                        text_run = elem["textRun"]
+                        full_text += text_run.get("content", "")
+                        if text_run.get("textStyle", {}).get("italic"):
+                            is_italic = True
+                
+                alignments.append(ParagraphAlignment(
+                    paragraph_index=paragraph_index,
+                    alignment=alignment,
+                    text=full_text.strip(),
+                    is_italic=is_italic,
+                    is_on_first_page=is_on_first_page
+                ))
+
                 if is_on_first_page:
                     # Debug print with safety checks
                     elements = paragraph.get("elements", [])
@@ -432,6 +486,8 @@ class GoogleDocsService:
             fallback_font_family=fallback_font,
             fallback_font_size_pt=fallback_size,
             first_page_break_index=first_page_break_index,
+            images=images,
+            alignments=alignments,
         )
 
     def _contains_page_number(self, content: list) -> bool:
