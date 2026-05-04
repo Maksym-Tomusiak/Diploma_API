@@ -20,6 +20,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Lowercase repo name
+        run: |
+          echo "IMAGE_NAME=${GITHUB_REPOSITORY_OWNER,,}/${{ github.event.repository.name }}" >> ${GITHUB_ENV}
+
       # ЦЕЙ КРОК КРИТИЧНИЙ ДЛЯ ORACLE ARM
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
