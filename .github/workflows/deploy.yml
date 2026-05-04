@@ -7,7 +7,7 @@ on:
 env:
   REGISTRY: ghcr.io
   # Для фронта: diploma-frontend, для апі: diploma-backend
-  IMAGE_NAME: ${{ github.repository_owner }}/diploma-backend
+  IMAGE_NAME: ${{ github.repository_owner }}/diploma-api
 
 jobs:
   build-and-push:
