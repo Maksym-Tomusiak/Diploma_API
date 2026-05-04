@@ -1,0 +1,39 @@
+from pydantic import BaseModel, Field
+from pydantic_settings import SettingsConfigDict
+from typing import Optional
+from datetime import datetime
+from enum import Enum
+
+from models.document import Document, DocumentStatus
+
+
+class DocumentStatusStr(str, Enum):
+    pending = "pending"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+
+
+class DocumentCreate(BaseModel):
+    google_doc_id: str = Field(..., min_length=1, max_length=255, description="Google Docs document ID")
+    template_id: int = Field(..., gt=0, description="Template ID for formatting rules")
+
+
+class DocumentDto(BaseModel):
+    id: int = Field(..., gt=0)
+    google_doc_id: str
+    title: Optional[str]
+    status: DocumentStatusStr
+    created_at: datetime
+
+    @staticmethod
+    def from_document(doc: Document) -> 'DocumentDto':
+        return DocumentDto(
+            id=doc.id,
+            google_doc_id=doc.google_doc_id,
+            title=doc.title,
+            status=doc.status,
+            created_at=doc.created_at
+        )
+
+    model_config = SettingsConfigDict(from_attributes=True)
