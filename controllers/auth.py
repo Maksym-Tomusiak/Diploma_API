@@ -32,6 +32,7 @@ async def login(request: Request, auth_service: AuthServiceDependency):
     """
     # Build callback URL from request
     redirect_uri = str(request.url_for("auth_callback"))
+    print(f"DEBUG: Generated redirect_uri for Google: {redirect_uri}")
     authorization_url = auth_service.get_authorization_url(redirect_uri)
     return GoogleAuthUrl(authorization_url=authorization_url)
 
