@@ -7,6 +7,7 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from core.cleanup import cleanup_old_logs
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from controllers import (
     auth_router,
@@ -64,8 +65,11 @@ app = FastAPI(
     title="Diploma API",
     description="API for document formatting verification",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    root_path="/api"
 )
+
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Custom exception handler for validation errors to prevent binary data decoding issues
 @app.exception_handler(RequestValidationError)
