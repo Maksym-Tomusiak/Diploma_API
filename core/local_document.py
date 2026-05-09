@@ -1097,6 +1097,10 @@ class LocalDocumentService:
                 if not run.text.strip():
                     continue
                 
+                # Ensure headings are explicitly bold
+                if is_heading and not run.font.bold:
+                    run.font.bold = True
+                
                 # Apply font size
                 if run.font.size:
                     old_size = run.font.size.pt

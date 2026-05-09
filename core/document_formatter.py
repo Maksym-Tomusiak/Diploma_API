@@ -588,16 +588,34 @@ class DocumentFormatterService:
                             text_style = {"fontSize": {"magnitude": params.font_size, "unit": "PT"}}
                             fields = "fontSize"
                             
-                            has_explicit_bold = existing_style.get("bold", False)
-                            has_inherited_bold = is_heading and not existing_style
-                            if has_explicit_bold or has_inherited_bold:
+                            # We only want to set explicit bold if we really need to.
+                            # Google Docs inherits bolding from paragraph styles (headings).
+                            # The bug happens because updating weightedFontFamily requires a 'weight'.
+                            # If we set weight to 400 on a heading, it unbolds it.
+                            
+                            # FORCE BOLD ON ALL HEADINGS
+                            if is_heading:
                                 text_style["bold"] = True
                                 fields += ",bold"
                             
                             if font_family:
-                                existing_weight = existing_style.get("weightedFontFamily", {}).get("weight", 400)
-                                if is_heading and not existing_style: existing_weight = 700
-                                text_style["weightedFontFamily"] = {"fontFamily": font_family, "weight": existing_weight}
+                                # Try to get explicit weight first
+                                existing_weight = existing_style.get("weightedFontFamily", {}).get("weight")
+                                
+                                # If no explicit weight in font family, infer it
+                                if existing_weight is None:
+                                    if existing_style.get("bold") is True:
+                                        existing_weight = 700
+                                    elif is_heading and existing_style.get("bold") is not False:
+                                        # Headings are bold by default, unless explicitly unbolded
+                                        existing_weight = 700
+                                    else:
+                                        existing_weight = 400
+                                        
+                                text_style["weightedFontFamily"] = {
+                                    "fontFamily": font_family, 
+                                    "weight": existing_weight
+                                }
                                 fields += ",weightedFontFamily"
                             
                             requests.append({
