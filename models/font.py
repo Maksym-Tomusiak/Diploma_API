@@ -10,11 +10,11 @@ class Font(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
     family: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
-    category: Mapped[str] = mapped_column(String(50), nullable=True)  # serif, sans-serif, display, etc.
-    variants: Mapped[str] = mapped_column(Text, nullable=True)  # Comma-separated list of variants
-    subsets: Mapped[str] = mapped_column(Text, nullable=True)  # Comma-separated list of subsets
+    category: Mapped[str] = mapped_column(String(50), nullable=True)
+    variants: Mapped[str] = mapped_column(Text, nullable=True)
+    subsets: Mapped[str] = mapped_column(Text, nullable=True)
     version: Mapped[str] = mapped_column(String(50), nullable=True)
-    last_modified: Mapped[str] = mapped_column(String(50), nullable=True)  # Date from Google Fonts API
+    last_modified: Mapped[str] = mapped_column(String(50), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
 
     def __repr__(self):
