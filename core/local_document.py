@@ -103,6 +103,7 @@ class LocalDocumentProperties:
     page_number_start: int = 1
     # First page different (skip first page for numbering/headers)
     first_page_different: bool = False
+    numbering_start_page: int = 1
     # Image and alignment info
     images: list[LocalImageInfo] = field(default_factory=list)
     alignments: list[ParagraphAlignment] = field(default_factory=list)
@@ -308,30 +309,27 @@ class LocalDocumentService:
             
         return 1.15 # Standard Word/Docs default
 
+    def _header_footer_contains_page_number(self, hf) -> bool:
+        if not hf:
+            return False
+        try:
+            hf_xml = hf._element
+            for fld_char in hf_xml.iter(qn('w:fldChar')):
+                return True
+            for instr_text in hf_xml.iter(qn('w:instrText')):
+                if instr_text.text and 'PAGE' in instr_text.text:
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _contains_page_number(self, section) -> bool:
         """Check if section headers/footers contain page number fields."""
         try:
-            # Check header
-            if section.header:
-                header_xml = section.header._element
-                # Look for fldChar with PAGE field
-                for fld_char in header_xml.iter(qn('w:fldChar')):
-                    return True
-                # Look for instrText containing PAGE
-                for instr_text in header_xml.iter(qn('w:instrText')):
-                    if instr_text.text and 'PAGE' in instr_text.text:
-                        return True
-            
-            # Check footer
-            if section.footer:
-                footer_xml = section.footer._element
-                # Look for fldChar with PAGE field
-                for fld_char in footer_xml.iter(qn('w:fldChar')):
-                    return True
-                # Look for instrText containing PAGE
-                for instr_text in footer_xml.iter(qn('w:instrText')):
-                    if instr_text.text and 'PAGE' in instr_text.text:
-                        return True
+            if section.header and self._header_footer_contains_page_number(section.header):
+                return True
+            if section.footer and self._header_footer_contains_page_number(section.footer):
+                return True
         except Exception as e:
             print(f"Error checking page numbers: {e}")
         return False
@@ -422,9 +420,13 @@ class LocalDocumentService:
         # Using conservative estimate: ~8-9 chars per inch for typical 12pt fonts with spacing
         chars_per_line = max(40, int(usable_page_width_inches * 8.5))
 
-        # --- NEW: Track explicit page boundaries ---
+        # --- NEW: Track explicit page boundaries and section starts ---
         cumulative_height_inches = 0.0
         has_passed_first_page = False
+        section_start_pages = {0: 1}
+        current_section_idx = 0
+        current_page = 1
+        page_cumulative_height = 0.0
 
         # Extract text and formatting from paragraphs
         for para_idx, paragraph in enumerate(doc.paragraphs):
@@ -458,6 +460,38 @@ class LocalDocumentService:
                 para_height_inches += paragraph.paragraph_format.space_before.inches
             if paragraph.paragraph_format.space_after:
                 para_height_inches += paragraph.paragraph_format.space_after.inches
+
+            # Track physical page index
+            has_hard_break = False
+            if paragraph.paragraph_format.page_break_before:
+                has_hard_break = True
+            else:
+                for run in paragraph.runs:
+                    if run._element.find(qn('w:lastRenderedPageBreak')) is not None:
+                        has_hard_break = True
+                        break
+                    for br in run._element.findall(qn('w:br')):
+                        if br.get(qn('w:type')) == 'page':
+                            has_hard_break = True
+                            break
+            
+            if has_hard_break:
+                current_page += 1
+                page_cumulative_height = 0.0
+
+            page_cumulative_height += para_height_inches
+            if page_cumulative_height > usable_page_height_inches:
+                current_page += 1
+                page_cumulative_height = para_height_inches
+
+            # Check if this paragraph ends a section
+            pPr = paragraph._element.pPr
+            if pPr is not None:
+                sectPr = pPr.find(qn('w:sectPr'))
+                if sectPr is not None:
+                    next_section_idx = current_section_idx + 1
+                    section_start_pages[next_section_idx] = current_page
+                    current_section_idx = next_section_idx
 
             # --- NEW FIRST PAGE DETECTION LOGIC ---
             # 1. Check for explicit page boundaries before this paragraph
@@ -587,25 +621,35 @@ class LocalDocumentService:
         else:
             page_size = {"width": 8.5, "height": 11.0}
 
-        # Check for page numbers in headers/footers
+        # Check for page numbers in headers/footers across all sections
         has_page_numbers = False
         page_number_start = 1
         first_page_different = False
+        numbering_start_page = 0
         
-        if section:
-            has_page_numbers = self._contains_page_number(section)
-            
-            # Check if first page is different
+        first_numbered_section_idx = -1
+        for idx, sec in enumerate(doc.sections):
+            if self._contains_page_number(sec):
+                has_page_numbers = True
+                first_numbered_section_idx = idx
+                break
+        
+        # Check if first page is different (typically on the first section)
+        if doc.sections:
+            first_sec = doc.sections[0]
             try:
-                sectPr = section._sectPr
+                sectPr = first_sec._sectPr
                 titlePg = sectPr.find(qn('w:titlePg'))
                 first_page_different = titlePg is not None
             except Exception:
                 pass
+
+        if has_page_numbers and first_numbered_section_idx != -1:
+            numbered_sec = doc.sections[first_numbered_section_idx]
             
-            # Try to get page number start (pgNumType)
+            # Try to get page number start (pgNumType) for this section
             try:
-                sectPr = section._sectPr
+                sectPr = numbered_sec._sectPr
                 pgNumType = sectPr.find(qn('w:pgNumType'))
                 if pgNumType is not None:
                     start_attr = pgNumType.get(qn('w:start'))
@@ -613,6 +657,23 @@ class LocalDocumentService:
                         page_number_start = int(start_attr)
             except Exception:
                 pass
+                
+            # Determine numbering start page
+            if first_numbered_section_idx == 0:
+                if first_page_different:
+                    first_page_numbered = False
+                    if first_sec.different_first_page_header_footer:
+                        first_page_numbered = self._header_footer_contains_page_number(first_sec.first_page_footer) or \
+                                             self._header_footer_contains_page_number(first_sec.first_page_header)
+                    
+                    if not first_page_numbered:
+                        numbering_start_page = 2
+                    else:
+                        numbering_start_page = 1
+                else:
+                    numbering_start_page = 1
+            else:
+                numbering_start_page = section_start_pages.get(first_numbered_section_idx, 1)
 
         return LocalDocumentProperties(
             title=title,
@@ -623,6 +684,7 @@ class LocalDocumentService:
             has_page_numbers=has_page_numbers,
             page_number_start=page_number_start,
             first_page_different=first_page_different,
+            numbering_start_page=numbering_start_page,
             images=images,
             alignments=alignments
         )
@@ -954,52 +1016,56 @@ class LocalDocumentService:
                 issues.append(FormatIssue(
                     type="page_numbering_missing",
                     severity="high",
-                    details="Document does not have page numbers, but they are required",
+                    details="У документі відсутня нумерація сторінок, хоча вона є обов'язковою",
                     expected="Page numbers enabled",
                     actual="No page numbers found",
                 ))
             else:
-                # Check page number start
-                expected_start = params.start_from_number
-                actual_start = doc_props.page_number_start
+                # Support numbering_start_page generically with backward compatibility for skip_first_page
+                expected_start_page = params.numbering_start_page
+                if params.skip_first_page and expected_start_page == 1:
+                    expected_start_page = 2
                 
-                if params.skip_first_page:
-                    # When skip_first_page is true, first page shouldn't have numbering
-                    # Page 2 should show the expected start number
-                    if not doc_props.first_page_different:
+                expected_start_number = params.start_from_number
+                actual_start_page = doc_props.numbering_start_page
+                actual_start_number = doc_props.page_number_start
+                
+                # Check 1: Start Page mismatch
+                if actual_start_page != expected_start_page:
+                    if expected_start_page == 2:
                         issues.append(FormatIssue(
                             type="page_numbering_on_first_page",
                             severity="medium",
-                            details="First page numbering should be hidden. Enable 'Different first page' in Page Setup.",
-                            expected="First page without number",
-                            actual="First page has number",
+                            details="На 1-й сторінці відображається номер сторінки, але нумерація повинна починатися з 2-ї сторінки. Увімкніть 'Окрема перша сторінка' в налаштуваннях макета сторінки (Page Setup) у Word.",
+                            expected="Стор 1: без номера, Стор 2: номер",
+                            actual=f"Стор 1: номер {actual_start_number}",
                         ))
-                    elif actual_start != expected_start:
-                        issues.append(FormatIssue(
-                            type="page_number_start_mismatch",
-                            severity="medium",
-                            details=f"Page numbering starts at {actual_start}, expected {expected_start}. The number shown on page 2 should be {expected_start}.",
-                            expected=f"{expected_start}",
-                            actual=f"{actual_start}",
-                        ))
-                else:
-                    # When skip_first_page is false, numbering should start on first page
-                    if doc_props.first_page_different:
+                    elif expected_start_page == 1:
                         issues.append(FormatIssue(
                             type="page_numbering_first_page_different",
                             severity="medium",
-                            details="First page is set to be different ('Different first page' is enabled). This hides page numbering on the first page. Please disable 'Different first page' to ensure numbering starts on Page 1.",
-                            expected="Same header/footer on all pages",
-                            actual="Different first page enabled",
+                            details="Перша сторінка встановлена як окрема (нумерація прихована), хоча очікується нумерація з 1-ї сторінки. Будь ласка, вимкніть 'Окрема перша сторінка' (Different First Page) в налаштуваннях колонтитулів у Word.",
+                            expected="Нумерація з 1-ї сторінки",
+                            actual="Нумерація прихована на 1-й сторінці",
                         ))
-                    elif actual_start != expected_start:
+                    else:
                         issues.append(FormatIssue(
-                            type="page_number_start_mismatch",
+                            type="page_numbering_start_page_mismatch",
                             severity="medium",
-                            details=f"Page numbering starts at {actual_start}, expected {expected_start}",
-                            expected=f"{expected_start}",
-                            actual=f"{actual_start}",
+                            details=f"Нумерація починається зі сторінки {actual_start_page}, а очікувалося зі сторінки {expected_start_page}.",
+                            expected=f"Початок нумерації на сторінці {expected_start_page}",
+                            actual=f"Початок нумерації на сторінці {actual_start_page}",
                         ))
+                
+                # Check 2: Start Number mismatch
+                if actual_start_number != expected_start_number:
+                    issues.append(FormatIssue(
+                        type="page_number_start_mismatch",
+                        severity="medium",
+                        details=f"На першій пронумерованій сторінці відображається номер {actual_start_number}, а очікувався номер {expected_start_number}. У налаштуваннях формату номерів сторінок у Word встановіть 'Почати з' (Start at) на {expected_start_number}.",
+                        expected=str(expected_start_number),
+                        actual=str(actual_start_number),
+                    ))
 
         # Calculate score
         if not doc_props.text_segments:

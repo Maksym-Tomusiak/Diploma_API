@@ -323,72 +323,51 @@ class FormatCheckerService:
                     actual="Нумерацію не знайдено",
                 ))
             else:
-                expected_start = params.start_from_number
-                actual_start = doc_props.page_number_start
+                # Support numbering_start_page generically with backward compatibility for skip_first_page
+                expected_start_page = params.numbering_start_page
+                if params.skip_first_page and expected_start_page == 1:
+                    expected_start_page = 2
                 
-                # Case 1: Skip first page is ENABLED (Validation for Page 2)
-                if params.skip_first_page:
-                    if doc_props.first_page_different:
-                        # Logic Fix for Problem 1:
-                        # If Page 1 is hidden, Page 2 shows the next number.
-                        # Visual Expected on Page 2 = start_from_number + 1
-                        # Visual Actual on Page 2   = actual_start + 1 (because actual_start is the config for Page 1)
-                        if actual_start != expected_start:
-                            # Calculate visual values for error message
-                            visual_expected = expected_start + 1
-                            visual_actual = actual_start + 1
-                            
-                            issues.append(FormatIssue(
-                                type="page_number_start_mismatch",
-                                severity="medium",
-                                details=f"На першій пронумерованій сторінці (стор. 2) відображається номер {visual_actual}, а очікувався {visual_expected}. У Google Docs перейдіть у Вставка > Номери сторінок > Додаткові параметри та встановіть 'Почати з' на {expected_start}",
-                                expected=str(visual_expected),
-                                actual=str(visual_actual),
-                            ))
-                    else:
-                        # Skip first page enabled, but 'Different first page' is OFF
-                        # This means Page 1 has a number, which is incorrect.
+                expected_start_number = params.start_from_number
+                actual_start_page = doc_props.numbering_start_page
+                actual_start_number = doc_props.page_number_start
+                
+                # Check 1: Start Page mismatch
+                if actual_start_page != expected_start_page:
+                    if expected_start_page == 2:
                         issues.append(FormatIssue(
                             type="page_numbering_on_first_page",
                             severity="high",
-                            details=f"На 1-й сторінці відображається номер {actual_start}, але вона не повинна бути пронумерована (увімкнено пропуск першої сторінки). Увімкніть 'Окрема перша сторінка' у налаштуваннях макета Google Docs.",
-                            expected=f"Стор 1: без номера, Стор 2: номер {expected_start + 1}",
-                            actual=f"Стор 1: номер {actual_start}",
+                            details=f"На 1-й сторінці відображається номер сторінки, але нумерація повинна починатися з 2-ї сторінки. Увімкніть 'Окрема перша сторінка' в налаштуваннях макета Google Docs.",
+                            expected="Стор 1: без номера, Стор 2: номер",
+                            actual=f"Стор 1: номер {actual_start_number}",
+                        ))
+                    elif expected_start_page == 1:
+                        issues.append(FormatIssue(
+                            type="page_numbering_first_page_different",
+                            severity="medium",
+                            details="Перша сторінка встановлена як окрема (нумерація прихована), хоча очікується нумерація з 1-ї сторінки. Будь ласка, вимкніть 'Окрема перша сторінка' у параметрах макета Google Docs.",
+                            expected="Нумерація з 1-ї сторінки",
+                            actual="Нумерація прихована на 1-й сторінці",
+                        ))
+                    else:
+                        issues.append(FormatIssue(
+                            type="page_numbering_start_page_mismatch",
+                            severity="medium",
+                            details=f"Нумерація починається зі сторінки {actual_start_page}, а очікувалося зі сторінки {expected_start_page}.",
+                            expected=f"Початок нумерації на сторінці {expected_start_page}",
+                            actual=f"Початок нумерації на сторінці {actual_start_page}",
                         ))
                 
-                # Case 2: Skip first page is DISABLED (Validation for Page 1)
-                else:
-                    if actual_start != expected_start:
-                        issues.append(FormatIssue(
-                            type="page_number_start_mismatch",
-                            severity="low",
-                            details=f"Нумерація сторінок починається з {actual_start}, очікувалося з {expected_start}",
-                            expected=str(expected_start),
-                            actual=str(actual_start),
-                        ))
-
-        # --- Different First Page Setting Checks (Updated) ---
-        if params.skip_first_page:
-            if not doc_props.first_page_different:
-                issues.append(FormatIssue(
-                    type="first_page_not_different",
-                    severity="high",
-                    details="Перша сторінка має бути окремою (увімкнено пропуск першої сторінки), але в документі це не налаштовано. У Google Docs перейдіть у Формат > Налаштування сторінки та увімкніть 'Окрема перша сторінка'.",
-                    expected="Верхній/нижній колонтитул першої сторінки відрізняється",
-                    actual="Перша сторінка використовує той самий колонтитул",
-                ))
-        else:
-            # Logic Fix for Problem 2:
-            # If skip_first_page is FALSE, we want consistent numbering.
-            # If 'Different first page' is ON, Page 1 usually loses its number (unless manually added).
-            if doc_props.first_page_different:
-                issues.append(FormatIssue(
-                    type="first_page_should_not_be_different",
-                    severity="medium",
-                    details="Перша сторінка встановлена як окрема (увімкнено 'Окрема перша сторінка'). Це часто приховує нумерацію на першій сторінці. Будь ласка, вимкніть 'Окрема перша сторінка', щоб нумерація починалася з 1-ї сторінки.",
-                    expected="Перша сторінка використовує той самий колонтитул",
-                    actual="Перша сторінка відрізняється",
-                ))
+                # Check 2: Start Number mismatch
+                if actual_start_number != expected_start_number:
+                    issues.append(FormatIssue(
+                        type="page_number_start_mismatch",
+                        severity="medium",
+                        details=f"На першій пронумерованій сторінці відображається номер {actual_start_number}, а очікувався номер {expected_start_number}. У Google Docs перейдіть у Вставка > Номери сторінок > Додаткові параметри та встановіть 'Почати з' на {expected_start_number}.",
+                        expected=str(expected_start_number),
+                        actual=str(actual_start_number),
+                    ))
 
         # Calculate score
         processing_time_ms = int((time.time() - start_time) * 1000)

@@ -22,6 +22,7 @@ class TemplateParams(BaseModel):
     check_numbering: bool = Field(default=True, description="Чи перевіряти нумерацію сторінок")
     start_from_number: int = Field(default=1, ge=1, description="З якого номера починати нумерацію")
     skip_first_page: bool = Field(default=False, description="Чи пропускати першу сторінку (перша сторінка без номера)")
+    numbering_start_page: int = Field(default=1, ge=1, description="З якої сторінки починати нумерацію сторінок")
 
 
 class TemplateCreate(BaseModel):
