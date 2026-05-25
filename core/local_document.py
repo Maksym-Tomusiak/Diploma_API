@@ -421,6 +421,13 @@ class LocalDocumentService:
         chars_per_line = max(40, int(usable_page_width_inches * 8.5))
 
         # --- NEW: Track explicit page boundaries and section starts ---
+        # Check if the document has any w:lastRenderedPageBreak elements
+        has_rendered_page_breaks = False
+        try:
+            has_rendered_page_breaks = len(doc.element.xpath('//*[local-name()="lastRenderedPageBreak"]')) > 0
+        except Exception:
+            pass
+
         cumulative_height_inches = 0.0
         has_passed_first_page = False
         section_start_pages = {0: 1}
@@ -479,10 +486,11 @@ class LocalDocumentService:
                 current_page += 1
                 page_cumulative_height = 0.0
 
-            page_cumulative_height += para_height_inches
-            if page_cumulative_height > usable_page_height_inches:
-                current_page += 1
-                page_cumulative_height = para_height_inches
+            if not has_rendered_page_breaks:
+                page_cumulative_height += para_height_inches
+                if page_cumulative_height > usable_page_height_inches:
+                    current_page += 1
+                    page_cumulative_height = para_height_inches
 
             # Check if this paragraph ends a section
             pPr = paragraph._element.pPr
@@ -490,8 +498,19 @@ class LocalDocumentService:
                 sectPr = pPr.find(qn('w:sectPr'))
                 if sectPr is not None:
                     next_section_idx = current_section_idx + 1
-                    section_start_pages[next_section_idx] = current_page
+                    
+                    # Check type of section break (continuous vs page break nextPage)
+                    break_type_elem = sectPr.find(qn('w:type'))
+                    is_continuous = break_type_elem is not None and break_type_elem.get(qn('w:val')) == 'continuous'
+                    next_section_start = current_page if is_continuous else (current_page + 1)
+                    
+                    section_start_pages[next_section_idx] = next_section_start
                     current_section_idx = next_section_idx
+                    
+                    # If it's a page-break section break, increment current_page for subsequent paragraphs
+                    if not is_continuous:
+                        current_page = next_section_start
+                        page_cumulative_height = 0.0
 
             # --- NEW FIRST PAGE DETECTION LOGIC ---
             # 1. Check for explicit page boundaries before this paragraph
@@ -506,7 +525,7 @@ class LocalDocumentService:
                             break
 
             # 2. Fallback to height heuristic if no hard break is found
-            if not has_passed_first_page:
+            if not has_passed_first_page and not has_rendered_page_breaks:
                 if cumulative_height_inches > usable_page_height_inches:
                     has_passed_first_page = True
 
@@ -1415,14 +1434,26 @@ class LocalDocumentService:
         
         # Apply page numbering
         if params.check_numbering and doc.sections:
-            section = doc.sections[0]
+            # Find the section that actually contains page numbers, or fallback to section 0
+            target_section_idx = 0
+            for idx, sec in enumerate(doc.sections):
+                if self._contains_page_number(sec):
+                    target_section_idx = idx
+                    break
+            
+            section = doc.sections[target_section_idx]
             
             # Set up "Different first page" based on skip_first_page parameter
             try:
                 sectPr = section._sectPr
                 titlePg = sectPr.find(qn('w:titlePg'))
                 
-                if params.skip_first_page:
+                # Only apply skip_first_page different first page behavior to Section 0.
+                # If target section is > 0, it means it's a farther page section unlinked from previous
+                # and we should keep it un-skipped so numbering is visible on the first page of that section.
+                expected_different_first = params.skip_first_page if target_section_idx == 0 else False
+                
+                if expected_different_first:
                     # Need different first page
                     if titlePg is None:
                         # Add titlePg element to enable "Different first page"
