@@ -413,12 +413,12 @@ class LocalDocumentService:
         page_width_inches = section.page_width.inches if section and section.page_width else 8.5
 
         # Calculate usable dimensions for content on first page
-        usable_page_height_inches = (page_height_inches - top_margin_inches - bottom_margin_inches) * 0.80
+        usable_page_height_inches = (page_height_inches - top_margin_inches - bottom_margin_inches) * 0.95
         usable_page_width_inches = page_width_inches - left_margin_inches - right_margin_inches
 
         # Estimate characters per line based on usable width
-        # Using conservative estimate: ~8-9 chars per inch for typical 12pt fonts with spacing
-        chars_per_line = max(40, int(usable_page_width_inches * 8.5))
+        # ~10-11 chars per inch for standard 12pt-14pt fonts with spacing
+        chars_per_line = max(40, int(usable_page_width_inches * 10.5))
 
         # --- NEW: Track explicit page boundaries and section starts ---
         # Check if the document has any w:lastRenderedPageBreak elements
@@ -1434,12 +1434,111 @@ class LocalDocumentService:
         
         # Apply page numbering
         if params.check_numbering and doc.sections:
-            # Find the section that actually contains page numbers, or fallback to section 0
             target_section_idx = 0
+            first_sec = doc.sections[0]
+            
+            # Fetch A4 or Letter page geometry from first section
+            page_height_inches = first_sec.page_height.inches if first_sec.page_height else 11.69
+            top_margin_inches = first_sec.top_margin.inches if first_sec.top_margin else 0.787
+            bottom_margin_inches = first_sec.bottom_margin.inches if first_sec.bottom_margin else 0.787
+            page_width_inches = first_sec.page_width.inches if first_sec.page_width else 8.27
+            left_margin_inches = first_sec.left_margin.inches if first_sec.left_margin else 1.18
+            right_margin_inches = first_sec.right_margin.inches if first_sec.right_margin else 0.39
+            
+            # Simplified section start page tracking
+            section_start_pages = {0: 1}
+            current_section_idx = 0
+            current_page = 1
+            page_cumulative_height = 0.0
+            
+            has_rendered_page_breaks = False
+            try:
+                has_rendered_page_breaks = len(doc.element.xpath('//*[local-name()="lastRenderedPageBreak"]')) > 0
+            except Exception:
+                pass
+                
+            usable_page_height_inches = (page_height_inches - top_margin_inches - bottom_margin_inches) * 0.95
+            usable_page_width_inches = page_width_inches - left_margin_inches - right_margin_inches
+            chars_per_line = max(40, int(usable_page_width_inches * 10.5))
+            
+            for paragraph in doc.paragraphs:
+                para_font_sizes = [run.font.size.pt for run in paragraph.runs if run.font.size]
+                avg_font_size = sum(para_font_sizes) / len(para_font_sizes) if para_font_sizes else 12.0
+                
+                line_spacing_multiple = 1.15
+                if paragraph.paragraph_format.line_spacing is not None:
+                    spacing = paragraph.paragraph_format.line_spacing
+                    if isinstance(spacing, (int, float)):
+                        line_spacing_multiple = float(spacing)
+                
+                line_height_inches = (avg_font_size / 72.0) * line_spacing_multiple
+                para_text_length = len(paragraph.text)
+                estimated_lines = max(1, para_text_length // chars_per_line) if para_text_length > 0 else 1
+                para_height_inches = line_height_inches * estimated_lines
+                
+                if paragraph.paragraph_format.space_before:
+                    para_height_inches += paragraph.paragraph_format.space_before.inches
+                if paragraph.paragraph_format.space_after:
+                    para_height_inches += paragraph.paragraph_format.space_after.inches
+                
+                has_hard_break = False
+                if paragraph.paragraph_format.page_break_before:
+                    has_hard_break = True
+                else:
+                    for run in paragraph.runs:
+                        if run._element.find(qn('w:lastRenderedPageBreak')) is not None:
+                            has_hard_break = True
+                            break
+                        for br in run._element.findall(qn('w:br')):
+                            if br.get(qn('w:type')) == 'page':
+                                has_hard_break = True
+                                break
+                
+                if has_hard_break:
+                    current_page += 1
+                    page_cumulative_height = 0.0
+                
+                if not has_rendered_page_breaks:
+                    page_cumulative_height += para_height_inches
+                    if page_cumulative_height > usable_page_height_inches:
+                        current_page += 1
+                        page_cumulative_height = para_height_inches
+                
+                # Check for section break
+                pPr = paragraph._element.pPr
+                if pPr is not None:
+                    sectPr = pPr.find(qn('w:sectPr'))
+                    if sectPr is not None:
+                        next_section_idx = current_section_idx + 1
+                        
+                        break_type_elem = sectPr.find(qn('w:type'))
+                        is_continuous = break_type_elem is not None and break_type_elem.get(qn('w:val')) == 'continuous'
+                        next_section_start = current_page if is_continuous else (current_page + 1)
+                        
+                        section_start_pages[next_section_idx] = next_section_start
+                        current_section_idx = next_section_idx
+                        
+                        if not is_continuous:
+                            current_page = next_section_start
+                            page_cumulative_height = 0.0
+            
+            # Find closest section based on numbering_start_page parameter or existing page numbers
+            expected_start_page = params.numbering_start_page
+            if params.skip_first_page and expected_start_page == 1:
+                expected_start_page = 2
+                
+            found_existing_numbered_sec = False
             for idx, sec in enumerate(doc.sections):
                 if self._contains_page_number(sec):
                     target_section_idx = idx
+                    found_existing_numbered_sec = True
                     break
+            
+            if not found_existing_numbered_sec:
+                for idx in sorted(section_start_pages.keys(), reverse=True):
+                    if section_start_pages[idx] <= expected_start_page:
+                        target_section_idx = idx
+                        break
             
             section = doc.sections[target_section_idx]
             
