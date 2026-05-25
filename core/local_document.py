@@ -507,8 +507,8 @@ class LocalDocumentService:
                     section_start_pages[next_section_idx] = next_section_start
                     current_section_idx = next_section_idx
                     
-                    # If it's a page-break section break, increment current_page for subsequent paragraphs
-                    if not is_continuous:
+                    # If it's a page-break section break, increment current_page for subsequent paragraphs ONLY if we are relying on the height heuristic
+                    if not is_continuous and not has_rendered_page_breaks:
                         current_page = next_section_start
                         page_cumulative_height = 0.0
 
@@ -1518,7 +1518,7 @@ class LocalDocumentService:
                         section_start_pages[next_section_idx] = next_section_start
                         current_section_idx = next_section_idx
                         
-                        if not is_continuous:
+                        if not is_continuous and not has_rendered_page_breaks:
                             current_page = next_section_start
                             page_cumulative_height = 0.0
             
