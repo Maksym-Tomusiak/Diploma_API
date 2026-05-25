@@ -206,14 +206,29 @@ class FormatCheckerService:
                     actual="порожньо"
                 ))
             else:
+                # Split by newline to check if source is in the same paragraph (Shift+Enter case)
+                para_lines = caption_para.text.split('\n')
+                caption_lines = []
+                source_line = None
+                for line in para_lines:
+                    cleaned_line = line.strip()
+                    if not cleaned_line:
+                        continue
+                    if cleaned_line.lower().startswith("джерело:"):
+                        source_line = cleaned_line
+                    else:
+                        caption_lines.append(cleaned_line)
+                
+                caption_text = " ".join(caption_lines) if caption_lines else caption_para.text
+
                 # Check format
-                if not caption_pattern.match(caption_para.text):
+                if not caption_pattern.match(caption_text):
                     issues.append(FormatIssue(
                         type="image_caption_format_error",
                         severity="low",
-                        details=f"Неправильний формат підпису: '{caption_para.text[:30]}...'. Очікується: 'Рис. X.X. Опис'",
+                        details=f"Неправильний формат підпису: '{caption_text[:30]}...'. Очікується: 'Рис. X.X. Опис'",
                         expected="Рис. X.X. Назва",
-                        actual=caption_para.text[:30]
+                        actual=caption_text[:30]
                     ))
                 
                 # Check alignment
@@ -221,48 +236,80 @@ class FormatCheckerService:
                     issues.append(FormatIssue(
                         type="image_caption_alignment_error",
                         severity="low",
-                        details=f"Підпис під зображенням '{caption_para.text[:20]}' має бути відцентрований",
+                        details=f"Підпис під зображенням '{caption_text[:20]}' має бути відцентрований",
                         expected="CENTER",
                         actual=caption_para.alignment
                     ))
 
-                # 3. Check for source (paragraph after caption)
-                source_para = next((a for a in doc_props.alignments if a.paragraph_index == img.paragraph_index + 2), None)
-                if not source_para or not source_para.text:
-                    issues.append(FormatIssue(
-                        type="image_source_missing",
-                        severity="medium",
-                        details=f"Відсутнє джерело під зображенням '{caption_para.text[:20]}...'",
-                        expected="Джерело: розроблено автором (або інше)",
-                        actual="порожньо"
-                    ))
-                elif not source_para.text.lower().startswith("джерело:"):
-                    issues.append(FormatIssue(
-                        type="image_source_format_error",
-                        severity="low",
-                        details=f"Неправильний формат джерела: '{source_para.text[:30]}...'. Очікується: 'Джерело: опис'",
-                        expected="Джерело: ...",
-                        actual=source_para.text[:30]
-                    ))
+                # 3. Check for source (either embedded or in the paragraph after caption)
+                if source_line is not None:
+                    # Source is embedded in the caption paragraph
+                    # Check format
+                    if not source_line.lower().startswith("джерело:"):
+                        issues.append(FormatIssue(
+                            type="image_source_format_error",
+                            severity="low",
+                            details=f"Неправильний формат джерела: '{source_line[:30]}...'. Очікується: 'Джерело: опис'",
+                            expected="Джерело: ...",
+                            actual=source_line[:30]
+                        ))
+                    else:
+                        # Check alignment
+                        if caption_para.alignment != "CENTER":
+                            issues.append(FormatIssue(
+                                type="image_source_alignment_error",
+                                severity="low",
+                                details=f"Рядок джерела '{source_line[:20]}' має бути відцентрований",
+                                expected="CENTER",
+                                actual=caption_para.alignment
+                            ))
+                        # Check italic
+                        if not caption_para.is_italic:
+                            issues.append(FormatIssue(
+                                type="image_source_style_error",
+                                severity="low",
+                                details=f"Рядок джерела '{source_line[:20]}' має бути написаний курсивом",
+                                expected="italic",
+                                actual="normal"
+                            ))
                 else:
-                    # Check alignment
-                    if source_para.alignment != "CENTER":
+                    # Source is in the paragraph after caption
+                    source_para = next((a for a in doc_props.alignments if a.paragraph_index == img.paragraph_index + 2), None)
+                    if not source_para or not source_para.text:
                         issues.append(FormatIssue(
-                            type="image_source_alignment_error",
-                            severity="low",
-                            details=f"Рядок джерела '{source_para.text[:20]}' має бути відцентрований",
-                            expected="CENTER",
-                            actual=source_para.alignment
+                            type="image_source_missing",
+                            severity="medium",
+                            details=f"Відсутнє джерело під зображенням '{caption_text[:20]}...'",
+                            expected="Джерело: розроблено автором (або інше)",
+                            actual="порожньо"
                         ))
-                    # Check italic
-                    if not source_para.is_italic:
+                    elif not source_para.text.lower().startswith("джерело:"):
                         issues.append(FormatIssue(
-                            type="image_source_style_error",
+                            type="image_source_format_error",
                             severity="low",
-                            details=f"Рядок джерела '{source_para.text[:20]}' має бути написаний курсивом",
-                            expected="italic",
-                            actual="normal"
+                            details=f"Неправильний формат джерела: '{source_para.text[:30]}...'. Очікується: 'Джерело: опис'",
+                            expected="Джерело: ...",
+                            actual=source_para.text[:30]
                         ))
+                    else:
+                        # Check alignment
+                        if source_para.alignment != "CENTER":
+                            issues.append(FormatIssue(
+                                type="image_source_alignment_error",
+                                severity="low",
+                                details=f"Рядок джерела '{source_para.text[:20]}' має бути відцентрований",
+                                expected="CENTER",
+                                actual=source_para.alignment
+                            ))
+                        # Check italic
+                        if not source_para.is_italic:
+                            issues.append(FormatIssue(
+                                type="image_source_style_error",
+                                severity="low",
+                                details=f"Рядок джерела '{source_para.text[:20]}' має бути написаний курсивом",
+                                expected="italic",
+                                actual="normal"
+                            ))
         
         # --- Page Numbering Checks (Updated) ---
         if params.check_numbering:
