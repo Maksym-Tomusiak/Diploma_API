@@ -67,6 +67,7 @@ class DocumentProperties:
     page_number_start: int = 1
     # First page different (skip first page for numbering/headers)
     first_page_different: bool = False
+    numbering_start_page: int = 1
     # Fallback styles from NORMAL_TEXT
     fallback_font_family: Optional[str] = None
     fallback_font_size_pt: Optional[float] = None
@@ -439,37 +440,102 @@ class GoogleDocsService:
                 
                 paragraph_index += 1
         
-        # Check for page numbers in headers/footers
-        has_page_numbers = False
-        page_number_start = 1
+        # Track physical page numbers for elements
+        para_pages = {}
+        cumulative_height_pt = 0.0
+        current_page = 1
+        available_height_pt = (page_height_pt - margin_top - margin_bottom) * 0.87
         
+        temp_para_index = 0
+        for element in content:
+            if "pageBreak" in element:
+                current_page += 1
+                cumulative_height_pt = 0.0
+                continue
+                
+            if "paragraph" in element:
+                paragraph = element["paragraph"]
+                para_style = paragraph.get("paragraphStyle", {})
+                line_spacing = para_style.get("lineSpacing", 115) / 100
+                spacing_before = para_style.get("spacingBefore", {}).get("magnitude", 0)
+                spacing_after = para_style.get("spacingAfter", {}).get("magnitude", 0)
+                para_named_style_type = para_style.get("namedStyleType", "NORMAL_TEXT")
+                para_style_defaults = named_styles_map.get(para_named_style_type, {})
+                is_heading = para_named_style_type.startswith("HEADING_")
+                estimated_font_size = para_style_defaults.get("font_size") or fallback_size or 11
+                
+                para_text_length = sum(len(elem.get("textRun", {}).get("content", "")) for elem in paragraph.get("elements", []) if "textRun" in elem)
+                avg_char_width_pt = estimated_font_size * 0.62
+                chars_per_line = max(1, content_width_pt / avg_char_width_pt)
+                estimated_lines = math.ceil(para_text_length / chars_per_line) if para_text_length > 0 else 1
+                
+                font_vertical_metrics = 1.2
+                base_line_height = (estimated_font_size * font_vertical_metrics) * line_spacing * estimated_lines
+                heading_extra_space = estimated_font_size if is_heading else 0
+                para_height = base_line_height + spacing_before + spacing_after + heading_extra_space + 3
+                
+                cumulative_height_pt += para_height
+                if cumulative_height_pt > available_height_pt:
+                    current_page += 1
+                    cumulative_height_pt = para_height
+                    
+                para_pages[temp_para_index] = current_page
+                temp_para_index += 1
+
+        # Track sections and their start pages
+        section_styles = [doc_style]
+        section_start_pages = {0: 1}
+        current_section_idx = 0
+        temp_para_index = 0
+        for element in content:
+            if "sectionBreak" in element:
+                sb = element["sectionBreak"]
+                style = sb.get("sectionStyle", {})
+                section_styles.append(style)
+                
+                next_section_idx = current_section_idx + 1
+                section_start_pages[next_section_idx] = para_pages.get(temp_para_index, current_page)
+                current_section_idx = next_section_idx
+            if "paragraph" in element:
+                temp_para_index += 1
+
         headers = document.get("headers", {})
         footers = document.get("footers", {})
-        
-        # Check headers
-        for header_id, header in headers.items():
-            if self._contains_page_number(header.get("content", [])):
-                has_page_numbers = True
+
+        # Find first numbered section
+        first_numbered_section_idx = -1
+        for idx, style in enumerate(section_styles):
+            if self._section_has_page_numbers(style, headers, footers):
+                first_numbered_section_idx = idx
                 break
-        
-        # Check footers if not found in headers
-        if not has_page_numbers:
-            for footer_id, footer in footers.items():
-                if self._contains_page_number(footer.get("content", [])):
-                    has_page_numbers = True
-                    break
-        
-        # Get page number start from document style
+
+        has_page_numbers = first_numbered_section_idx != -1
+        numbering_start_page = 0
         page_number_start = doc_style.get("pageNumberStart", 1)
-        
-        # When "different first page" is enabled, Google Docs reports the pageNumberStart value
-        # which is exactly what appears on page 2 (the first numbered page).
-        # So if pageNumberStart = 3 and first_page_different = true:
-        #   - Page 1: no number
-        #   - Page 2: shows "3"
-        #   - Page 3: shows "4"
-        # No adjustment needed - the value from API is correct.
-        
+
+        if has_page_numbers:
+            if first_numbered_section_idx == 0:
+                use_first_page_h_f = doc_style.get("useFirstPageHeaderFooter", False)
+                if use_first_page_h_f:
+                    first_footer_id = doc_style.get("firstPageFooterId")
+                    first_header_id = doc_style.get("firstPageHeaderId")
+                    first_page_numbered = False
+                    if first_footer_id and first_footer_id in footers:
+                        if self._contains_page_number(footers[first_footer_id].get("content", [])):
+                            first_page_numbered = True
+                    if first_header_id and first_header_id in headers:
+                        if self._contains_page_number(headers[first_header_id].get("content", [])):
+                            first_page_numbered = True
+                    
+                    if not first_page_numbered:
+                        numbering_start_page = 2
+                    else:
+                        numbering_start_page = 1
+                else:
+                    numbering_start_page = 1
+            else:
+                numbering_start_page = section_start_pages.get(first_numbered_section_idx, 1)
+
         return DocumentProperties(
             title=title,
             page_width_pt=page_width_pt,
@@ -481,6 +547,7 @@ class GoogleDocsService:
             has_page_numbers=has_page_numbers,
             page_number_start=page_number_start,
             first_page_different=first_page_different,
+            numbering_start_page=numbering_start_page,
             text_segments=text_segments,
             paragraph_line_spacings=paragraph_line_spacings,
             fallback_font_family=fallback_font,
@@ -501,6 +568,20 @@ class GoogleDocsService:
                         auto_text = elem["autoText"]
                         if auto_text.get("type") == "PAGE_NUMBER":
                             return True
+        return False
+
+    def _section_has_page_numbers(self, style: dict, headers: dict, footers: dict) -> bool:
+        header_ids = [style.get("defaultHeaderId"), style.get("firstPageHeaderId")]
+        footer_ids = [style.get("defaultFooterId"), style.get("firstPageFooterId")]
+        
+        for h_id in header_ids:
+            if h_id and h_id in headers:
+                if self._contains_page_number(headers[h_id].get("content", [])):
+                    return True
+        for f_id in footer_ids:
+            if f_id and f_id in footers:
+                if self._contains_page_number(footers[f_id].get("content", [])):
+                    return True
         return False
 
 
