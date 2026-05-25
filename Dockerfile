@@ -6,6 +6,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
+    libreoffice-core \
+    libreoffice-writer \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies

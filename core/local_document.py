@@ -507,8 +507,8 @@ class LocalDocumentService:
                     section_start_pages[next_section_idx] = next_section_start
                     current_section_idx = next_section_idx
                     
-                    # If it's a page-break section break, increment current_page for subsequent paragraphs ONLY if we are relying on the height heuristic
-                    if not is_continuous and not has_rendered_page_breaks:
+                    # If it's a page-break section break, increment current_page for subsequent paragraphs
+                    if not is_continuous:
                         current_page = next_section_start
                         page_cumulative_height = 0.0
 
@@ -692,7 +692,29 @@ class LocalDocumentService:
                 else:
                     numbering_start_page = 1
             else:
-                numbering_start_page = section_start_pages.get(first_numbered_section_idx, 1)
+                # Use PDF twin to get exact page number of the section start
+                pdf_page = None
+                try:
+                    from core import pdf_utils
+                    first_para_text = None
+                    current_sec_idx = 0
+                    for p in doc.paragraphs:
+                        if current_sec_idx == first_numbered_section_idx and p.text.strip():
+                            first_para_text = p.text.strip()
+                            break
+                        pPr = p._element.pPr
+                        if pPr is not None and pPr.find(qn('w:sectPr')) is not None:
+                            current_sec_idx += 1
+                            
+                    if first_para_text:
+                        pdf_page = pdf_utils.find_text_in_pdf_pages(file_content, first_para_text)
+                except Exception as e:
+                    print(f"PDF twin failed for properties: {e}")
+                
+                if pdf_page is not None:
+                    numbering_start_page = pdf_page
+                else:
+                    numbering_start_page = section_start_pages.get(first_numbered_section_idx, 1)
 
         return LocalDocumentProperties(
             title=title,
@@ -1518,7 +1540,7 @@ class LocalDocumentService:
                         section_start_pages[next_section_idx] = next_section_start
                         current_section_idx = next_section_idx
                         
-                        if not is_continuous and not has_rendered_page_breaks:
+                        if not is_continuous:
                             current_page = next_section_start
                             page_cumulative_height = 0.0
             
@@ -1533,6 +1555,70 @@ class LocalDocumentService:
                     target_section_idx = idx
                     found_existing_numbered_sec = True
                     break
+            
+            if not found_existing_numbered_sec and expected_start_page > 1:
+                # User wants to start numbering on a later page (e.g., page 8)
+                # Use PDF twin to find the text at the start of that page, and create a section break there.
+                try:
+                    from core import pdf_utils
+                    from io import BytesIO
+                    from copy import deepcopy
+                    
+                    target_text = pdf_utils.get_page_start_text_via_pdf(file_content, expected_start_page - 1)
+                    if target_text:
+                        target_para_idx = -1
+                        search_words = target_text.split()
+                        search_str = " ".join(search_words[:10]) if len(search_words) > 10 else target_text
+                        
+                        for i, p in enumerate(doc.paragraphs):
+                            if p.text.strip() and search_str in p.text:
+                                target_para_idx = i
+                                break
+                                
+                        if target_para_idx > 0:
+                            prev_p = doc.paragraphs[target_para_idx - 1]
+                            pPr = prev_p._element.get_or_add_pPr()
+                            
+                            # Only add section break if there isn't one already
+                            if pPr.find(qn('w:sectPr')) is None:
+                                new_sectPr = deepcopy(doc.sections[-1]._sectPr)
+                                type_elem = new_sectPr.find(qn('w:type'))
+                                if type_elem is not None:
+                                    type_elem.set(qn('w:val'), 'nextPage')
+                                else:
+                                    type_elem = etree.SubElement(new_sectPr, qn('w:type'))
+                                    type_elem.set(qn('w:val'), 'nextPage')
+                                    
+                                pPr.append(new_sectPr)
+                                
+                                changes.append(FormatChange(
+                                    type="page_numbering",
+                                    description=f"Created section break for page {expected_start_page}",
+                                    before="No section break",
+                                    after=f"Inserted section break before: '{search_str}'",
+                                ))
+                                
+                                # Reload document to parse the new section break correctly
+                                temp_io = BytesIO()
+                                doc.save(temp_io)
+                                doc = Document(temp_io)
+                                
+                                # Find the new section index
+                                current_sec_idx = 0
+                                target_section_idx = -1
+                                for i, p in enumerate(doc.paragraphs):
+                                    if i == target_para_idx:
+                                        target_section_idx = current_sec_idx
+                                        break
+                                    if p._element.pPr is not None and p._element.pPr.find(qn('w:sectPr')) is not None:
+                                        current_sec_idx += 1
+                                        
+                                if target_section_idx == -1:
+                                    target_section_idx = current_sec_idx
+                                
+                                found_existing_numbered_sec = True
+                except Exception as e:
+                    print(f"Failed to create section break via PDF twin: {e}")
             
             if not found_existing_numbered_sec:
                 for idx in sorted(section_start_pages.keys(), reverse=True):

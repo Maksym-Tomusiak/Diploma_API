@@ -162,6 +162,8 @@ pydantic-settings==2.12.0
     # via -r requirements.in
 pygments==2.19.2
     # via pytest
+pymupdf==1.27.2.3
+    # via -r requirements.in
 pyparsing==3.2.5
     # via httplib2
 pyproject-hooks==1.2.0
@@ -240,4 +242,3 @@ wheel==0.45.1
 # The following packages are considered to be unsafe in a requirements file:
 # pip
 # setuptools
-APScheduler==3.10.4
