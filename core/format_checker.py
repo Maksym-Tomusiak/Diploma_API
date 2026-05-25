@@ -207,7 +207,8 @@ class FormatCheckerService:
                 ))
             else:
                 # Split by newline to check if source is in the same paragraph (Shift+Enter case)
-                para_lines = caption_para.text.split('\n')
+                import re
+                para_lines = re.split(r'[\n\r\v\u000b]', caption_para.text)
                 caption_lines = []
                 source_line = None
                 for line in para_lines:
