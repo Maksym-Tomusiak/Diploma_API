@@ -26,6 +26,7 @@ python-docx>=0.8.11
 beautifulsoup4>=4.12.3
 lxml>=5.2.1
 reportlab>=4.4.5
+pymupdf>=1.24.0
 
 # Dev Tools
 pip-tools>=7.3.0
