@@ -14,7 +14,7 @@ class SimpleLogger:
 
 logger = SimpleLogger()
 
-def get_page_start_text_via_pdf(docx_bytes: bytes, target_page_index: int, max_words: int = 15) -> str | None:
+def get_page_start_text_via_pdf(docx_bytes: bytes, target_page_index: int, max_words: int = 40) -> str | None:
     """
     Converts a docx document to PDF using LibreOffice and returns the first few words 
     of the specified physical page (0-indexed).
@@ -145,8 +145,9 @@ def find_text_in_pdf_pages(docx_bytes: bytes, target_text: str) -> int | None:
             doc = fitz.open(pdf_path)
             num_pages = len(doc)
             target_words = target_text.split()
-            # Try to match the first few words to be robust against slight formatting changes
-            search_string = " ".join(target_words[:10]) if len(target_words) > 10 else target_text
+            # Try to match up to 40 words to be robust against slight formatting changes
+            # while ensuring the string is long enough to bypass Table of Contents entries
+            search_string = " ".join(target_words[:40]) if len(target_words) > 40 else target_text
             
             # Normalize search string spaces
             import re
