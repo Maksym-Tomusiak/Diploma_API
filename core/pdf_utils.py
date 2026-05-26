@@ -143,14 +143,21 @@ def find_text_in_pdf_pages(docx_bytes: bytes, target_text: str) -> int | None:
             
         try:
             doc = fitz.open(pdf_path)
+            num_pages = len(doc)
             target_words = target_text.split()
             # Try to match the first few words to be robust against slight formatting changes
             search_string = " ".join(target_words[:10]) if len(target_words) > 10 else target_text
             
+            # Normalize search string spaces
+            import re
+            search_string = re.sub(r'\s+', ' ', search_string).strip()
+            
             found_page = None
-            for page_num in range(len(doc)):
+            for page_num in range(num_pages):
                 page = doc[page_num]
                 text = page.get_text("text")
+                # Normalize text spaces and newlines
+                text = re.sub(r'\s+', ' ', text)
                 if search_string in text:
                     found_page = page_num + 1
                     break
@@ -159,7 +166,7 @@ def find_text_in_pdf_pages(docx_bytes: bytes, target_text: str) -> int | None:
             if found_page:
                 logger.info(f"Successfully found text on page {found_page}")
             else:
-                logger.warning(f"Could not find text in any of the {len(doc)} pages: '{search_string}'")
+                logger.warning(f"Could not find text in any of the {num_pages} pages: '{search_string}'")
             return found_page
             
         except Exception as e:
