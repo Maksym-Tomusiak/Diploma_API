@@ -703,15 +703,21 @@ class LocalDocumentService:
                 pdf_page = None
                 try:
                     from core import pdf_utils
-                    first_para_text = None
+                    first_paras = []
+                    word_count = 0
                     current_sec_idx = 0
                     for p in doc.paragraphs:
                         if current_sec_idx == first_numbered_section_idx and p.text.strip():
-                            first_para_text = p.text.strip()
-                            break
+                            first_paras.append(p.text.strip())
+                            word_count += len(p.text.split())
+                            if word_count >= 40:
+                                break
+                                
                         pPr = p._element.pPr
                         if pPr is not None and pPr.find(qn('w:sectPr')) is not None:
                             current_sec_idx += 1
+                            
+                    first_para_text = " ".join(first_paras) if first_paras else None
                             
                     if first_para_text:
                         logger.info(f"PDF twin finding page for first_para_text: '{first_para_text}'")
@@ -1577,14 +1583,24 @@ class LocalDocumentService:
                     if target_text:
                         logger.info(f"PDF twin target_text for expected start page {expected_start_page}: '{target_text}'")
                         target_para_idx = -1
-                        search_words = target_text.split()
-                        search_str = " ".join(search_words[:10]) if len(search_words) > 10 else target_text
+                        import re
+                        normalized_target = re.sub(r'\s+', ' ', target_text).strip()
                         
-                        logger.info(f"PDF twin searching doc.paragraphs for: '{search_str}'")
+                        logger.info(f"PDF twin searching doc.paragraphs for start of: '{normalized_target[:100]}...'")
                         for i, p in enumerate(doc.paragraphs):
-                            if p.text.strip() and search_str in p.text:
-                                target_para_idx = i
-                                break
+                            if not p.text.strip():
+                                continue
+                            
+                            normalized_p = re.sub(r'\s+', ' ', p.text).strip()
+                            
+                            # Check if the PDF text starts with this paragraph's text
+                            # or if this paragraph's text starts with the PDF text (if para is longer than 40 words)
+                            if len(normalized_p) > 10:
+                                if normalized_target.startswith(normalized_p) or normalized_p.startswith(normalized_target):
+                                    # Ensure it's not a TOC entry by checking if it has a trailing page number pattern
+                                    if not re.search(r'\d+$', normalized_p) or re.search(r'\d+$', normalized_target):
+                                        target_para_idx = i
+                                        break
                                 
                         if target_para_idx > 0:
                             prev_p = doc.paragraphs[target_para_idx - 1]
