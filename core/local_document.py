@@ -1576,7 +1576,6 @@ class LocalDocumentService:
                 # Use PDF twin to find the text at the start of that page, and create a section break there.
                 try:
                     from core import pdf_utils
-                    from io import BytesIO
                     from copy import deepcopy
                     
                     target_text = pdf_utils.get_page_start_text_via_pdf(file_content, expected_start_page - 1)
@@ -1607,6 +1606,7 @@ class LocalDocumentService:
                             pPr = prev_p._element.get_or_add_pPr()
                             
                             # Only add section break if there isn't one already
+                            # We import BytesIO at the top of the file, so we can use it here safely
                             if pPr.find(qn('w:sectPr')) is None:
                                 new_sectPr = deepcopy(doc.sections[-1]._sectPr)
                                 type_elem = new_sectPr.find(qn('w:type'))
@@ -1622,7 +1622,7 @@ class LocalDocumentService:
                                     type="page_numbering",
                                     description=f"Created section break for page {expected_start_page}",
                                     before="No section break",
-                                    after=f"Inserted section break before: '{search_str}'",
+                                    after=f"Inserted section break before: '{normalized_target[:50]}...'",
                                 ))
                                 
                                 # Reload document to parse the new section break correctly
