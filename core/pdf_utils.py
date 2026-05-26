@@ -1,14 +1,18 @@
 import os
 import tempfile
 import subprocess
-import logging
 
 try:
     import fitz  # PyMuPDF
 except ImportError:
     fitz = None
 
-logger = logging.getLogger(__name__)
+class SimpleLogger:
+    def info(self, msg): print("INFO:", msg, flush=True)
+    def error(self, msg): print("ERROR:", msg, flush=True)
+    def warning(self, msg): print("WARNING:", msg, flush=True)
+
+logger = SimpleLogger()
 
 def get_page_start_text_via_pdf(docx_bytes: bytes, target_page_index: int, max_words: int = 15) -> str | None:
     """
@@ -33,8 +37,10 @@ def get_page_start_text_via_pdf(docx_bytes: bytes, target_page_index: int, max_w
                 docx_path, "--outdir", temp_dir
             ]
             
+            logger.info(f"Running LibreOffice to convert docx to PDF for page {target_page_index} extraction")
             try:
                 subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                logger.info("LibreOffice conversion (libreoffice) successful")
             except FileNotFoundError:
                 # Fallback for Windows if 'libreoffice' is not in PATH but 'soffice' is
                 command[0] = "soffice"
@@ -80,6 +86,7 @@ def get_page_start_text_via_pdf(docx_bytes: bytes, target_page_index: int, max_w
             # Take the first few words
             words = text.split()
             first_words = " ".join(words[:max_words])
+            logger.info(f"Successfully extracted {len(words)} words from page {target_page_index}. Start text: '{first_words}'")
             return first_words
             
         except Exception as e:
@@ -108,8 +115,10 @@ def find_text_in_pdf_pages(docx_bytes: bytes, target_text: str) -> int | None:
                 "libreoffice", "--headless", "--convert-to", "pdf", 
                 docx_path, "--outdir", temp_dir
             ]
+            logger.info(f"Running LibreOffice to convert docx to PDF to find text: '{target_text[:30]}...'")
             try:
                 subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                logger.info("LibreOffice conversion (libreoffice) successful")
             except FileNotFoundError:
                 command[0] = "soffice"
                 try:
@@ -147,6 +156,10 @@ def find_text_in_pdf_pages(docx_bytes: bytes, target_text: str) -> int | None:
                     break
                     
             doc.close()
+            if found_page:
+                logger.info(f"Successfully found text on page {found_page}")
+            else:
+                logger.warning(f"Could not find text in any of the {len(doc)} pages: '{search_string}'")
             return found_page
             
         except Exception as e:
