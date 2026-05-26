@@ -15,6 +15,13 @@ from docx.oxml.simpletypes import ST_TwipsMeasure, ST_SignedTwipsMeasure
 from docx.enum.text import WD_LINE_SPACING
 from fastapi import Depends
 
+class SimpleLogger:
+    def info(self, msg): print("INFO:", msg, flush=True)
+    def error(self, msg): print("ERROR:", msg, flush=True)
+    def warning(self, msg): print("WARNING:", msg, flush=True)
+
+logger = SimpleLogger()
+
 from core.format_checker import FormatIssue, CheckResult
 from core.document_formatter import FormatChange, FormatResult as FormatterResult
 from schemas.template import TemplateParams
@@ -707,9 +714,11 @@ class LocalDocumentService:
                             current_sec_idx += 1
                             
                     if first_para_text:
+                        logger.info(f"PDF twin finding page for first_para_text: '{first_para_text}'")
                         pdf_page = pdf_utils.find_text_in_pdf_pages(file_content, first_para_text)
+                        logger.info(f"PDF twin returned page: {pdf_page}")
                 except Exception as e:
-                    print(f"PDF twin failed for properties: {e}")
+                    logger.error(f"PDF twin failed for properties: {e}")
                 
                 if pdf_page is not None:
                     numbering_start_page = pdf_page
@@ -1566,10 +1575,12 @@ class LocalDocumentService:
                     
                     target_text = pdf_utils.get_page_start_text_via_pdf(file_content, expected_start_page - 1)
                     if target_text:
+                        logger.info(f"PDF twin target_text for expected start page {expected_start_page}: '{target_text}'")
                         target_para_idx = -1
                         search_words = target_text.split()
                         search_str = " ".join(search_words[:10]) if len(search_words) > 10 else target_text
                         
+                        logger.info(f"PDF twin searching doc.paragraphs for: '{search_str}'")
                         for i, p in enumerate(doc.paragraphs):
                             if p.text.strip() and search_str in p.text:
                                 target_para_idx = i
@@ -1617,8 +1628,9 @@ class LocalDocumentService:
                                     target_section_idx = current_sec_idx
                                 
                                 found_existing_numbered_sec = True
+                                logger.info(f"PDF twin successfully created section break and found new target section idx: {target_section_idx}")
                 except Exception as e:
-                    print(f"Failed to create section break via PDF twin: {e}")
+                    logger.error(f"Failed to create section break via PDF twin: {e}")
             
             if not found_existing_numbered_sec:
                 for idx in sorted(section_start_pages.keys(), reverse=True):
