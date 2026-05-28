@@ -107,7 +107,7 @@ class LocalDocumentProperties:
     page_size: dict[str, float] = field(default_factory=dict)
     # Page numbering
     has_page_numbers: bool = False
-    page_number_start: int = 1
+    page_number_start: Optional[int] = None
     # First page different (skip first page for numbering/headers)
     first_page_different: bool = False
     numbering_start_page: int = 1
@@ -340,6 +340,18 @@ class LocalDocumentService:
         except Exception as e:
             print(f"Error checking page numbers: {e}")
         return False
+
+    def _find_page_number_location(self, doc) -> str:
+        """Finds if page numbers are primarily in the header or footer."""
+        try:
+            for sec in doc.sections:
+                if sec.header and self._header_footer_contains_page_number(sec.header):
+                    return 'header'
+                if sec.footer and self._header_footer_contains_page_number(sec.footer):
+                    return 'footer'
+        except Exception:
+            pass
+        return 'footer'  # Default if not found
 
     def _get_document_theme_fonts(self, doc: Document) -> dict[str, str]:
         """
@@ -649,7 +661,7 @@ class LocalDocumentService:
 
         # Check for page numbers in headers/footers across all sections
         has_page_numbers = False
-        page_number_start = 1
+        page_number_start = None
         first_page_different = False
         numbering_start_page = 0
         
@@ -1081,7 +1093,6 @@ class LocalDocumentService:
                 expected_start_page = params.numbering_start_page
                 if params.skip_first_page and expected_start_page == 1:
                     expected_start_page = 2
-                
                 expected_start_number = params.start_from_number
                 actual_start_page = doc_props.numbering_start_page
                 actual_start_number = doc_props.page_number_start
@@ -1113,14 +1124,21 @@ class LocalDocumentService:
                             actual=f"Початок нумерації на сторінці {actual_start_page}",
                         ))
                 
+                actual_start_number_attr = doc_props.page_number_start
+                if actual_start_number_attr is not None:
+                    actual_displayed_number = actual_start_number_attr
+                else:
+                    actual_displayed_number = max(1, actual_start_page)
+                
                 # Check 2: Start Number mismatch
-                if actual_start_number != expected_start_number:
+                if actual_displayed_number != expected_start_number:
+                    suggested_start = expected_start_number
                     issues.append(FormatIssue(
                         type="page_number_start_mismatch",
                         severity="medium",
-                        details=f"На першій пронумерованій сторінці відображається номер {actual_start_number}, а очікувався номер {expected_start_number}. У налаштуваннях формату номерів сторінок у Word встановіть 'Почати з' (Start at) на {expected_start_number}.",
+                        details=f"На першій пронумерованій сторінці відображається номер {actual_displayed_number}, а очікувався номер {expected_start_number}. У налаштуваннях формату номерів сторінок у Word встановіть 'Почати з' (Start at) на {suggested_start}.",
                         expected=str(expected_start_number),
-                        actual=str(actual_start_number),
+                        actual=str(actual_displayed_number),
                     ))
 
         # Calculate score
@@ -1498,7 +1516,9 @@ class LocalDocumentService:
             usable_page_width_inches = page_width_inches - left_margin_inches - right_margin_inches
             chars_per_line = max(40, int(usable_page_width_inches * 10.5))
             
+            para_estimated_pages = []
             for paragraph in doc.paragraphs:
+                para_estimated_pages.append(current_page)
                 para_font_sizes = [run.font.size.pt for run in paragraph.runs if run.font.size]
                 avg_font_size = sum(para_font_sizes) / len(para_font_sizes) if para_font_sizes else 12.0
                 
@@ -1571,15 +1591,19 @@ class LocalDocumentService:
                     found_existing_numbered_sec = True
                     break
             
-            if not found_existing_numbered_sec and expected_start_page > 1:
+            if expected_start_page > 2:
                 # User wants to start numbering on a later page (e.g., page 8)
                 # Use PDF twin to find the text at the start of that page, and create a section break there.
                 try:
                     from core import pdf_utils
-                    from io import BytesIO
                     from copy import deepcopy
                     
-                    target_text = pdf_utils.get_page_start_text_via_pdf(file_content, expected_start_page - 1)
+                    # Convert the current formatted state to bytes
+                    temp_io = BytesIO()
+                    doc.save(temp_io)
+                    formatted_bytes = temp_io.getvalue()
+                    
+                    target_text = pdf_utils.get_page_start_text_via_pdf(formatted_bytes, expected_start_page - 1)
                     if target_text:
                         logger.info(f"PDF twin target_text for expected start page {expected_start_page}: '{target_text}'")
                         target_para_idx = -1
@@ -1590,13 +1614,35 @@ class LocalDocumentService:
                         for i, p in enumerate(doc.paragraphs):
                             if not p.text.strip():
                                 continue
+                                
+                            # Prevent false positives on earlier pages, but allow a HUGE margin of error (6 pages)
+                            # because the naive estimator doesn't account for large images or tables which push text down.
+                            if para_estimated_pages[i] < max(0, expected_start_page - 6):
+                                continue
+                            
+                            # Skip Table of Contents (TOC) entries to avoid matching headings in TOC
+                            style_name = p.style.name.lower() if p.style else ""
+                            if any(x in style_name for x in ["toc", "table of contents", "зміст", "список"]):
+                                continue
+                                
+                            if p.text.count('.') > 5 or p.text.count('_') > 5 or p.text.count('·') > 5 or p.text.count('…') > 3:
+                                continue
                             
                             normalized_p = re.sub(r'\s+', ' ', p.text).strip()
                             
-                            # Check if the PDF text starts with this paragraph's text
-                            # or if this paragraph's text starts with the PDF text (if para is longer than 40 words)
-                            if len(normalized_p) > 10:
-                                if normalized_target.startswith(normalized_p) or normalized_p.startswith(normalized_target):
+                            # Alphanumeric matching is 100% robust against split paragraphs, bullets (●), punctuation, page numbers, etc.
+                            # We strip leading numbers/punctuation and extract a distinct 6-word snippet from the PDF page start.
+                            cleaned_target = re.sub(r'^[\s\d\.\,\-\_●•○■□*+]+', '', normalized_target).strip()
+                            target_words = cleaned_target.split()
+                            search_snippet = " ".join(target_words[:6]) if len(target_words) > 6 else cleaned_target
+                            
+                            alphanumeric_snippet = "".join(re.findall(r'\w', search_snippet)).lower()
+                            alphanumeric_p = "".join(re.findall(r'\w', normalized_p)).lower()
+                            
+                            if len(alphanumeric_snippet) > 10 and len(alphanumeric_p) > 10:
+                                # Match split paragraphs (snippet inside paragraph) or short paragraphs (paragraph inside snippet)
+                                if (alphanumeric_snippet in alphanumeric_p or 
+                                    alphanumeric_p in alphanumeric_snippet):
                                     # Ensure it's not a TOC entry by checking if it has a trailing page number pattern
                                     if not re.search(r'\d+$', normalized_p) or re.search(r'\d+$', normalized_target):
                                         target_para_idx = i
@@ -1609,6 +1655,12 @@ class LocalDocumentService:
                             # Only add section break if there isn't one already
                             if pPr.find(qn('w:sectPr')) is None:
                                 new_sectPr = deepcopy(doc.sections[-1]._sectPr)
+                                
+                                # Remove copied header/footer references to force python-docx
+                                # to create new, independent parts when unlinked.
+                                for ref in list(new_sectPr.findall(qn('w:headerReference'))) + list(new_sectPr.findall(qn('w:footerReference'))):
+                                    new_sectPr.remove(ref)
+                                    
                                 type_elem = new_sectPr.find(qn('w:type'))
                                 if type_elem is not None:
                                     type_elem.set(qn('w:val'), 'nextPage')
@@ -1622,29 +1674,32 @@ class LocalDocumentService:
                                     type="page_numbering",
                                     description=f"Created section break for page {expected_start_page}",
                                     before="No section break",
-                                    after=f"Inserted section break before: '{search_str}'",
+                                    after=f"Inserted section break before: '{normalized_target[:50]}...'",
                                 ))
                                 
                                 # Reload document to parse the new section break correctly
                                 temp_io = BytesIO()
                                 doc.save(temp_io)
+                                temp_io.seek(0)
                                 doc = Document(temp_io)
+                            else:
+                                logger.info("Found existing section break at target paragraph.")
                                 
-                                # Find the new section index
-                                current_sec_idx = 0
-                                target_section_idx = -1
-                                for i, p in enumerate(doc.paragraphs):
-                                    if i == target_para_idx:
-                                        target_section_idx = current_sec_idx
-                                        break
-                                    if p._element.pPr is not None and p._element.pPr.find(qn('w:sectPr')) is not None:
-                                        current_sec_idx += 1
-                                        
-                                if target_section_idx == -1:
+                            # Find the target section index
+                            current_sec_idx = 0
+                            target_section_idx = -1
+                            for i, p in enumerate(doc.paragraphs):
+                                if i == target_para_idx:
                                     target_section_idx = current_sec_idx
-                                
-                                found_existing_numbered_sec = True
-                                logger.info(f"PDF twin successfully created section break and found new target section idx: {target_section_idx}")
+                                    break
+                                if p._element.pPr is not None and p._element.pPr.find(qn('w:sectPr')) is not None:
+                                    current_sec_idx += 1
+                                    
+                            if target_section_idx == -1:
+                                target_section_idx = current_sec_idx
+                            
+                            found_existing_numbered_sec = True
+                            logger.info(f"PDF twin found target section idx: {target_section_idx}")
                 except Exception as e:
                     logger.error(f"Failed to create section break via PDF twin: {e}")
             
@@ -1655,6 +1710,31 @@ class LocalDocumentService:
                         break
             
             section = doc.sections[target_section_idx]
+            pn_location = self._find_page_number_location(doc)
+            
+            # Unlink header/footers from previous sections to prevent page numbers propagating backwards
+            if target_section_idx > 0:
+                for f_type in [pn_location, f'first_page_{pn_location}', f'even_page_{pn_location}']:
+                    f = getattr(section, f_type, None)
+                    if f is not None:
+                        try:
+                            f.is_linked_to_previous = False
+                        except Exception as e:
+                            logger.error(f"Failed to unlink {f_type} for section {target_section_idx}: {e}")
+                            
+            # Clear headers/footers in all preceding sections so no page numbers are displayed there
+            if target_section_idx > 0:
+                for idx in range(target_section_idx):
+                    prev_section = doc.sections[idx]
+                    for f_type in [pn_location, f'first_page_{pn_location}', f'even_page_{pn_location}']:
+                        f = getattr(prev_section, f_type, None)
+                        if f is not None:
+                            try:
+                                for child in list(f._element):
+                                    f._element.remove(child)
+                                f.add_paragraph()
+                            except Exception as e:
+                                logger.error(f"Failed to clear {f_type} in section {idx}: {e}")
             
             # Set up "Different first page" based on skip_first_page parameter
             try:
@@ -1696,55 +1776,45 @@ class LocalDocumentService:
                 sectPr = section._sectPr
                 pgNumType = sectPr.find(qn('w:pgNumType'))
                 
-                if params.start_from_number != 1:
-                    if pgNumType is None:
-                        # Create pgNumType element
-                        pgNumType = etree.SubElement(sectPr, qn('w:pgNumType'))
-                    
-                    old_start = pgNumType.get(qn('w:start'), '1')
-                    pgNumType.set(qn('w:start'), str(params.start_from_number))
-                    
-                    if old_start != str(params.start_from_number):
-                        changes.append(FormatChange(
-                            type="page_numbering",
-                            description="Set page number start",
-                            before=f"Start: {old_start}",
-                            after=f"Start: {params.start_from_number}",
-                        ))
-                elif pgNumType is not None:
-                    # Remove custom start if setting to default (1)
-                    start_attr = pgNumType.get(qn('w:start'))
-                    if start_attr and start_attr != '1':
-                        pgNumType.set(qn('w:start'), '1')
-                        changes.append(FormatChange(
-                            type="page_numbering",
-                            description="Reset page number start to default",
-                            before=f"Start: {start_attr}",
-                            after="Start: 1",
-                        ))
+                start_val = params.start_from_number
+                
+                if pgNumType is None:
+                    # Create pgNumType element
+                    pgNumType = etree.SubElement(sectPr, qn('w:pgNumType'))
+                
+                old_start = pgNumType.get(qn('w:start'))
+                pgNumType.set(qn('w:start'), str(start_val))
+                
+                if old_start != str(start_val):
+                    changes.append(FormatChange(
+                        type="page_numbering",
+                        description="Set page number start",
+                        before=f"Start: {old_start if old_start else 'None'}",
+                        after=f"Start: {start_val}",
+                    ))
             except Exception as e:
                 print(f"Error setting page number start: {e}")
             
-            # Add page number field to footer if not present
+            # Add page number field to header/footer if not present or make sure it is right-aligned
             try:
-                footer = section.footer
-                footer_xml = footer._element
+                target_hf = getattr(section, pn_location)
+                hf_xml = target_hf._element
                 
-                # Check if footer already has page number
+                # Check if it already has page number
                 has_page_num = False
-                for instr_text in footer_xml.iter(qn('w:instrText')):
+                for instr_text in hf_xml.iter(qn('w:instrText')):
                     if instr_text.text and 'PAGE' in instr_text.text:
                         has_page_num = True
                         break
                 
                 if not has_page_num:
-                    # Clear existing footer content
-                    for p in footer.paragraphs:
+                    # Clear existing content
+                    for p in target_hf.paragraphs:
                         p._element.getparent().remove(p._element)
                     
-                    # Add new centered paragraph with page number
-                    p = footer.add_paragraph()
-                    p.alignment = 1  # Center alignment (WD_ALIGN_PARAGRAPH.CENTER)
+                    # Add new right-aligned paragraph with page number
+                    p = target_hf.add_paragraph()
+                    p.alignment = 2  # Right alignment (WD_ALIGN_PARAGRAPH.RIGHT)
                     
                     # Add page number field
                     run = p.add_run()
@@ -1775,8 +1845,25 @@ class LocalDocumentService:
                         type="page_numbering",
                         description="Added page numbers to footer",
                         before="No page numbers",
-                        after="Page numbers in footer (centered)",
+                        after="Page numbers in footer (right-aligned)",
                     ))
+                else:
+                    # Ensure existing page number paragraph is right-aligned
+                    for p in target_hf.paragraphs:
+                        contains_page = False
+                        for instr_text in p._element.iter(qn('w:instrText')):
+                            if instr_text.text and 'PAGE' in instr_text.text:
+                                contains_page = True
+                                break
+                        if contains_page:
+                            if p.alignment != 2:
+                                p.alignment = 2
+                                changes.append(FormatChange(
+                                    type="page_numbering",
+                                    description="Ensured existing page numbers are right-aligned",
+                                    before="Center or Left",
+                                    after="Right-aligned",
+                                ))
             except Exception as e:
                 print(f"Error adding page numbers: {e}")
         

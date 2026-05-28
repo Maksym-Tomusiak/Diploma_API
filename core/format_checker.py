@@ -327,7 +327,6 @@ class FormatCheckerService:
                 expected_start_page = params.numbering_start_page
                 if params.skip_first_page and expected_start_page == 1:
                     expected_start_page = 2
-                
                 expected_start_number = params.start_from_number
                 actual_start_page = doc_props.numbering_start_page
                 actual_start_number = doc_props.page_number_start
@@ -359,14 +358,24 @@ class FormatCheckerService:
                             actual=f"Початок нумерації на сторінці {actual_start_page}",
                         ))
                 
-                # Check 2: Start Number mismatch
-                if actual_start_number != expected_start_number:
+                actual_start_number_attr = doc_props.page_number_start
+                if actual_start_number_attr is not None:
+                    actual_displayed_number = actual_start_number_attr
+                else:
+                    actual_displayed_number = max(1, actual_start_page)
+                if actual_displayed_number != expected_start_number:
+                    doc_suggested = expected_start_number - actual_start_page + 1 if actual_start_page >= 1 else expected_start_number
+                    if doc_suggested <= 0:
+                        suggested_text = f"на {expected_start_number} (увімкнувши 'Почати нову нумерацію' для цього розділу)"
+                    else:
+                        suggested_text = f"на {doc_suggested} (або {expected_start_number} якщо це новий розділ)"
+                    
                     issues.append(FormatIssue(
                         type="page_number_start_mismatch",
                         severity="medium",
-                        details=f"На першій пронумерованій сторінці відображається номер {actual_start_number}, а очікувався номер {expected_start_number}. У Google Docs перейдіть у Вставка > Номери сторінок > Додаткові параметри та встановіть 'Почати з' на {expected_start_number}.",
+                        details=f"На першій пронумерованій сторінці відображається номер {actual_displayed_number}, а очікувався номер {expected_start_number}. У Google Docs перейдіть у Вставка > Номери сторінок > Додаткові параметри та встановіть 'Почати з' {suggested_text}.",
                         expected=str(expected_start_number),
-                        actual=str(actual_start_number),
+                        actual=str(actual_displayed_number),
                     ))
 
         # Calculate score

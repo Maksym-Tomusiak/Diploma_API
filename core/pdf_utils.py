@@ -14,6 +14,32 @@ class SimpleLogger:
 
 logger = SimpleLogger()
 
+def _find_soffice_path_on_windows() -> str | None:
+    """Helper to locate soffice.exe on Windows using registry or common paths."""
+    try:
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\soffice.exe"
+        )
+        value, _ = winreg.QueryValue(key, "")
+        winreg.CloseKey(key)
+        if value and os.path.exists(value):
+            return value
+    except Exception:
+        pass
+        
+    common_paths = [
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        r"D:\LibreOffice\program\soffice.exe",
+    ]
+    for p in common_paths:
+        if os.path.exists(p):
+            return p
+            
+    return None
+
 def get_page_start_text_via_pdf(docx_bytes: bytes, target_page_index: int, max_words: int = 40) -> str | None:
     """
     Converts a docx document to PDF using LibreOffice and returns the first few words 
@@ -48,8 +74,8 @@ def get_page_start_text_via_pdf(docx_bytes: bytes, target_page_index: int, max_w
                     subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 except FileNotFoundError:
                     if os.name == 'nt':
-                        win_path = r"C:\Program Files\LibreOffice\program\soffice.exe"
-                        if os.path.exists(win_path):
+                        win_path = _find_soffice_path_on_windows()
+                        if win_path:
                             command[0] = win_path
                             subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                         else:
@@ -125,8 +151,8 @@ def find_text_in_pdf_pages(docx_bytes: bytes, target_text: str) -> int | None:
                     subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 except FileNotFoundError:
                     if os.name == 'nt':
-                        win_path = r"C:\Program Files\LibreOffice\program\soffice.exe"
-                        if os.path.exists(win_path):
+                        win_path = _find_soffice_path_on_windows()
+                        if win_path:
                             command[0] = win_path
                             subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                         else:
