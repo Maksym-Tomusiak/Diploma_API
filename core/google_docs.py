@@ -2,6 +2,7 @@
 Google Docs Service - Fetches document properties from Google Docs API.
 """
 import math
+import logging
 from typing import Annotated, Optional, Callable
 from dataclasses import dataclass, field
 
@@ -12,6 +13,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from common.app_settings import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -169,7 +172,15 @@ class GoogleDocsService:
             # Get the full document
             document = service.documents().get(documentId=doc_id).execute()
             
-            return self._extract_properties(document)
+            # Try to get PDF twin bytes for perfect page estimation
+            pdf_bytes = None
+            try:
+                drive_service = build("drive", "v3", credentials=credentials)
+                pdf_bytes = drive_service.files().export(fileId=doc_id, mimeType="application/pdf").execute()
+            except Exception as e:
+                logger.warning(f"Failed to export Google Doc to PDF twin: {e}")
+                
+            return self._extract_properties(document, pdf_bytes)
             
         except HttpError as e:
             if e.resp.status == 404:
@@ -193,8 +204,8 @@ class GoogleDocsService:
                     detail=f"Error communicating with Google Docs API: {str(e)}"
                 )
 
-    def _extract_properties(self, document: dict) -> DocumentProperties:
-        """Extract formatting properties from a Google Docs document."""
+    def _extract_properties(self, document: dict, pdf_bytes: Optional[bytes] = None) -> DocumentProperties:
+        """Extract formatting properties from a Google Docs document using optional PDF twin mapping."""
         title = document.get("title", "Untitled")
         
         # Get document style (page setup)
@@ -249,86 +260,179 @@ class GoogleDocsService:
         # First pass: find manual page break
         temp_para_index = 0
         for element in content:
-            if "pageBreak" in element and first_page_break_index is None:
-                first_page_break_index = temp_para_index
             if "paragraph" in element:
+                if first_page_break_index is None:
+                    for elem in element["paragraph"].get("elements", []):
+                        if "pageBreak" in elem:
+                            first_page_break_index = temp_para_index
+                            break
+                temp_para_index += 1
+                
+        # Extract clean paragraph texts and style names for PDF twin matching
+        paragraphs_text_list = []
+        styles_list = []
+        for element in content:
+            if "paragraph" in element:
+                paragraph = element["paragraph"]
+                para_text = "".join(elem.get("textRun", {}).get("content", "") for elem in paragraph.get("elements", []) if "textRun" in elem)
+                paragraphs_text_list.append(para_text)
+                
+                para_style = paragraph.get("paragraphStyle", {})
+                para_named_style_type = para_style.get("namedStyleType", "NORMAL_TEXT")
+                styles_list.append(para_named_style_type)
+        
+        # Run PDF twin page mapping if pdf_bytes is available
+        pdf_para_pages = {}
+        pdf_first_page_end = None
+        pdf_doc = None
+        if pdf_bytes is not None:
+            try:
+                import fitz
+                import re
+                
+                pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                logger.info(f"PDF twin loaded successfully. Total pages: {len(pdf_doc)}")
+                
+                last_found_para_idx = 0
+                for page_idx in range(len(pdf_doc)):
+                    page_text = pdf_doc[page_idx].get_text("text").strip()
+                    if not page_text:
+                        continue
+                    
+                    normalized_target = re.sub(r'\s+', ' ', page_text).strip()
+                    # Alphanumeric matching to bypass bullet points, leading numbers, punctuation
+                    cleaned_target = re.sub(r'^[\s\d\.\,\-\_●•○■□*+]+', '', normalized_target).strip()
+                    target_words = cleaned_target.split()
+                    search_snippet = " ".join(target_words[:6]) if len(target_words) > 6 else cleaned_target
+                    alphanumeric_snippet = "".join(re.findall(r'\w', search_snippet)).lower()
+                    
+                    if len(alphanumeric_snippet) < 8:
+                        continue
+                    
+                    for i in range(last_found_para_idx, len(paragraphs_text_list)):
+                        p_text = paragraphs_text_list[i]
+                        if not p_text.strip():
+                            continue
+                        
+                        # Skip TOC entries to prevent incorrect page mapping
+                        if any(x in styles_list[i].lower() for x in ["toc", "table of contents", "зміст", "список"]):
+                            continue
+                        if p_text.count('.') > 5 or p_text.count('_') > 5 or p_text.count('·') > 5:
+                            continue
+                        
+                        normalized_p = re.sub(r'\s+', ' ', p_text).strip()
+                        alphanumeric_p = "".join(re.findall(r'\w', normalized_p)).lower()
+                        
+                        if len(alphanumeric_p) > 10:
+                            if alphanumeric_snippet in alphanumeric_p or alphanumeric_p in alphanumeric_snippet:
+                                # Found the paragraph starting this page!
+                                for j in range(last_found_para_idx, i):
+                                    if j not in pdf_para_pages:
+                                        pdf_para_pages[j] = max(1, page_idx)
+                                
+                                pdf_para_pages[i] = page_idx + 1
+                                last_found_para_idx = i
+                                break
+                
+                # Fill in any remaining paragraphs sequentially
+                current_p = 1
+                for j in range(len(paragraphs_text_list)):
+                    if j in pdf_para_pages:
+                        current_p = pdf_para_pages[j]
+                    else:
+                        pdf_para_pages[j] = current_p
+                
+                # Find the first paragraph that belongs to page 2 (or higher)
+                for i in range(len(paragraphs_text_list)):
+                    if pdf_para_pages.get(i, 1) >= 2:
+                        pdf_first_page_end = i
+                        break
+                        
+                logger.info(f"PDF twin page mapping successful: page 2 starts at paragraph index {pdf_first_page_end}")
+            except Exception as e:
+                logger.error(f"Failed to perform PDF twin page mapping for Google Docs: {e}")
+                
+        # Always estimate first page end based on content height to serve as a sanity check
+        estimated_first_page_end: Optional[int] = None
+        # Calculate available height on first page (page height minus margins)
+        # Use 100% of printable area for maximum accuracy instead of reducing it
+        available_height_pt = (page_height_pt - margin_top - margin_bottom)
+        
+        # Estimate paragraph heights and accumulate until we exceed first page
+        cumulative_height_pt = 0.0
+        temp_para_index = 0
+        
+        for element in content:
+            if "paragraph" in element:
+                paragraph = element["paragraph"]
+                para_style = paragraph.get("paragraphStyle", {})
+                
+                # Get the paragraph's named style type (e.g., HEADING_1, NORMAL_TEXT)
+                para_named_style_type = para_style.get("namedStyleType", "NORMAL_TEXT")
+                is_heading = para_named_style_type.startswith("HEADING_")
+                
+                # Get the paragraph's named style defaults
+                para_style_defaults = named_styles_map.get(para_named_style_type, {})
+                
+                estimated_font_size = para_style_defaults.get("font_size") or fallback_size or 11
+                font_vertical_metrics = 1.2 # roughly 1.2x font size
+                line_spacing = para_style.get("lineSpacing", 115) / 100
+                
+                spacing_before = para_style.get("spaceAbove", {}).get("magnitude", 0)
+                spacing_after = para_style.get("spaceBelow", {}).get("magnitude", 0)
+                
+                # Estimate content width based on page size and margins
+                content_width_pt = page_width_pt - margin_left - margin_right
+                
+                # Count lines in paragraph (rough estimate based on content)
+                para_text_length = 0
+                for elem in paragraph.get("elements", []):
+                    if "textRun" in elem:
+                        content_text = elem["textRun"].get("content", "")
+                        para_text_length += len(content_text)
+                
+                # --- IMPROVED ESTIMATION LOGIC ---
+                
+                # Calculate avg char width (0.6 is a standard ratio for variable width fonts)
+                avg_char_width_pt = estimated_font_size * 0.62
+                
+                # Calculate how many chars fit on one line dynamically
+                chars_per_line = max(1, content_width_pt / avg_char_width_pt)
+                
+                # Use ceil to account for wrapping (e.g. 61 chars in 60 limit = 2 lines)
+                if para_text_length > 0:
+                    estimated_lines = math.ceil(para_text_length / chars_per_line)
+                else:
+                    estimated_lines = 1  # Empty line still has height
+                
+                # ---------------------------------
+                
+                # Calculate paragraph height: 
+                # - Base line height = font_size * line_spacing * number_of_lines
+                # - Add spacing before and after from paragraph style
+                # - Add extra spacing for headings (they typically have more space)
+                # - Add a buffer per paragraph (3pt) to account for rendering variations
+                base_line_height = (estimated_font_size * font_vertical_metrics) * line_spacing * estimated_lines
+                heading_extra_space = estimated_font_size if is_heading else 0
+                
+                para_height = base_line_height + spacing_before + spacing_after + heading_extra_space
+                
+                cumulative_height_pt += para_height
+                
+                # If we've exceeded the first page height, mark this as the boundary
+                if cumulative_height_pt > available_height_pt:
+                    estimated_first_page_end = temp_para_index
+                    break
+                
                 temp_para_index += 1
         
-        # If no manual page break found, estimate first page end based on content height
-        estimated_first_page_end: Optional[int] = None
-        if first_page_break_index is None:
-            # Calculate available height on first page (page height minus margins)
-            # Reduce by 12% as safety margin for headers, footers, and spacing variations
-            available_height_pt = (page_height_pt - margin_top - margin_bottom) * 0.87
-            
-            # Estimate paragraph heights and accumulate until we exceed first page
-            cumulative_height_pt = 0.0
-            temp_para_index = 0
-            
-            for element in content:
-                if "paragraph" in element:
-                    paragraph = element["paragraph"]
-                    para_style = paragraph.get("paragraphStyle", {})
-                    
-                    # Get line spacing (default 1.15)
-                    line_spacing = para_style.get("lineSpacing", 115) / 100
-                    
-                    # Get spacing before and after paragraph (in points)
-                    spacing_before = para_style.get("spacingBefore", {}).get("magnitude", 0)
-                    spacing_after = para_style.get("spacingAfter", {}).get("magnitude", 0)
-                    
-                    # Get paragraph's named style to estimate font size
-                    para_named_style_type = para_style.get("namedStyleType", "NORMAL_TEXT")
-                    para_style_defaults = named_styles_map.get(para_named_style_type, {})
-                    is_heading = para_named_style_type.startswith("HEADING_")
-                    
-                    # Estimate font size for this paragraph
-                    estimated_font_size = para_style_defaults.get("font_size") or fallback_size or 11
-                    
-                    # Count lines in paragraph (rough estimate based on content)
-                    para_text_length = 0
-                    for elem in paragraph.get("elements", []):
-                        if "textRun" in elem:
-                            content_text = elem["textRun"].get("content", "")
-                            para_text_length += len(content_text)
-                    
-                    # --- IMPROVED ESTIMATION LOGIC ---
-                    
-                    # Calculate avg char width (0.6 is a standard ratio for variable width fonts)
-                    avg_char_width_pt = estimated_font_size * 0.62
-                    
-                    # Calculate how many chars fit on one line dynamically
-                    chars_per_line = max(1, content_width_pt / avg_char_width_pt)
-                    
-                    # Use ceil to account for wrapping (e.g. 61 chars in 60 limit = 2 lines)
-                    if para_text_length > 0:
-                        estimated_lines = math.ceil(para_text_length / chars_per_line)
-                    else:
-                        estimated_lines = 1  # Empty line still has height
-                    
-                    # ---------------------------------
-                    font_vertical_metrics = 1.2
-                    # Calculate paragraph height: 
-                    # - Base line height = font_size * line_spacing * number_of_lines
-                    # - Add spacing before and after from paragraph style
-                    # - Add extra spacing for headings (they typically have more space)
-                    # - Add a buffer per paragraph (3pt) to account for rendering variations
-                    base_line_height = (estimated_font_size * font_vertical_metrics) * line_spacing * estimated_lines
-                    heading_extra_space = estimated_font_size if is_heading else 0
-                    
-                    para_height = base_line_height + spacing_before + spacing_after + heading_extra_space + 3
-                    
-                    cumulative_height_pt += para_height
-                    
-                    # If we've exceeded the first page height, mark this as the boundary
-                    if cumulative_height_pt > available_height_pt:
-                        estimated_first_page_end = temp_para_index
-                        break
-                    
-                    temp_para_index += 1
-        
         # Determine which method to use for first page detection
-        first_page_end_index = first_page_break_index if first_page_break_index is not None else estimated_first_page_end
+        if first_page_break_index is not None and (estimated_first_page_end is None or first_page_break_index <= estimated_first_page_end + 12):
+            first_page_end_index = first_page_break_index
+        elif pdf_first_page_end is not None and (estimated_first_page_end is None or pdf_first_page_end >= estimated_first_page_end * 0.4):
+            first_page_end_index = pdf_first_page_end
+        else:
+            first_page_end_index = estimated_first_page_end
         
         # Scan body content again to extract properties
         paragraph_index = 0
@@ -348,8 +452,8 @@ class GoogleDocsService:
                 
                 # Get line spacing from paragraph (default to 1.15 if not specified, which is Google Docs default)
                 line_spacing = para_style.get("lineSpacing", 115) / 100
-                # Mark as first page if this paragraph is before the first page end (manual break or estimated)
-                is_on_first_page = first_page_end_index is not None and paragraph_index < first_page_end_index
+                # Mark as first page if this paragraph is on the first page
+                is_on_first_page = first_page_end_index is None or paragraph_index < first_page_end_index
                 paragraph_line_spacings.append(ParagraphLineSpacing(
                     paragraph_index=paragraph_index,
                     line_spacing=line_spacing,
@@ -391,15 +495,7 @@ class GoogleDocsService:
                     is_on_first_page=is_on_first_page
                 ))
 
-                if is_on_first_page:
-                    # Debug print with safety checks
-                    elements = paragraph.get("elements", [])
-                    if elements and len(elements) > 0:
-                        first_elem = elements[0]
-                        text_run = first_elem.get("textRun")
-                        if text_run:
-                            content = text_run.get("content", "")
-                            print(f'Paragraph {content}\nline spacing: {line_spacing:.2f}\n')
+
                 
                 # Scan text runs in paragraph
                 for elem in paragraph.get("elements", []):
@@ -424,8 +520,8 @@ class GoogleDocsService:
                         if "fontSize" in text_style:
                             font_size = text_style["fontSize"].get("magnitude", para_default_size)
                         
-                        # Determine if this segment is on the first page (using manual break or estimation)
-                        is_on_first_page = first_page_end_index is not None and paragraph_index < first_page_end_index
+                        # Determine if this segment is on the first page
+                        is_on_first_page = first_page_end_index is None or paragraph_index < first_page_end_index
                         
                         # Create a TextSegment for this run
                         text_segments.append(TextSegment(
@@ -441,62 +537,86 @@ class GoogleDocsService:
                 paragraph_index += 1
         
         # Track physical page numbers for elements
+        # Track physical page numbers for elements
         para_pages = {}
-        cumulative_height_pt = 0.0
-        current_page = 1
-        available_height_pt = (page_height_pt - margin_top - margin_bottom) * 0.87
-        
-        temp_para_index = 0
-        for element in content:
-            if "pageBreak" in element:
-                current_page += 1
-                cumulative_height_pt = 0.0
-                continue
-                
-            if "paragraph" in element:
-                paragraph = element["paragraph"]
-                para_style = paragraph.get("paragraphStyle", {})
-                line_spacing = para_style.get("lineSpacing", 115) / 100
-                spacing_before = para_style.get("spacingBefore", {}).get("magnitude", 0)
-                spacing_after = para_style.get("spacingAfter", {}).get("magnitude", 0)
-                para_named_style_type = para_style.get("namedStyleType", "NORMAL_TEXT")
-                para_style_defaults = named_styles_map.get(para_named_style_type, {})
-                is_heading = para_named_style_type.startswith("HEADING_")
-                estimated_font_size = para_style_defaults.get("font_size") or fallback_size or 11
-                
-                para_text_length = sum(len(elem.get("textRun", {}).get("content", "")) for elem in paragraph.get("elements", []) if "textRun" in elem)
-                avg_char_width_pt = estimated_font_size * 0.62
-                chars_per_line = max(1, content_width_pt / avg_char_width_pt)
-                estimated_lines = math.ceil(para_text_length / chars_per_line) if para_text_length > 0 else 1
-                
-                font_vertical_metrics = 1.2
-                base_line_height = (estimated_font_size * font_vertical_metrics) * line_spacing * estimated_lines
-                heading_extra_space = estimated_font_size if is_heading else 0
-                para_height = base_line_height + spacing_before + spacing_after + heading_extra_space + 3
-                
-                cumulative_height_pt += para_height
-                if cumulative_height_pt > available_height_pt:
-                    current_page += 1
-                    cumulative_height_pt = para_height
+        if pdf_para_pages:
+            para_pages = pdf_para_pages
+            current_page = len(pdf_doc)
+        else:
+            cumulative_height_pt = 0.0
+            current_page = 1
+            available_height_pt = (page_height_pt - margin_top - margin_bottom) * 0.87
+            
+            temp_para_index = 0
+            for element in content:
+                if "sectionBreak" in element:
+                    # section breaks (if Next Page) often act as page breaks, but we will rely on paragraph pageBreak
+                    pass
                     
-                para_pages[temp_para_index] = current_page
-                temp_para_index += 1
+                if "paragraph" in element:
+                    paragraph = element["paragraph"]
+                    
+                    # Check for explicit page break in paragraph elements
+                    has_page_break = any("pageBreak" in elem for elem in paragraph.get("elements", []))
+                    if has_page_break:
+                        current_page += 1
+                        cumulative_height_pt = 0.0
+                        
+                    para_style = paragraph.get("paragraphStyle", {})
+                    line_spacing = para_style.get("lineSpacing", 115) / 100
+                    spacing_before = para_style.get("spacingBefore", {}).get("magnitude", 0)
+                    spacing_after = para_style.get("spacingAfter", {}).get("magnitude", 0)
+                    para_named_style_type = para_style.get("namedStyleType", "NORMAL_TEXT")
+                    para_style_defaults = named_styles_map.get(para_named_style_type, {})
+                    is_heading = para_named_style_type.startswith("HEADING_")
+                    estimated_font_size = para_style_defaults.get("font_size") or fallback_size or 11
+                    
+                    para_text_length = sum(len(elem.get("textRun", {}).get("content", "")) for elem in paragraph.get("elements", []) if "textRun" in elem)
+                    avg_char_width_pt = estimated_font_size * 0.62
+                    chars_per_line = max(1, content_width_pt / avg_char_width_pt)
+                    estimated_lines = math.ceil(para_text_length / chars_per_line) if para_text_length > 0 else 1
+                    
+                    font_vertical_metrics = 1.2
+                    base_line_height = (estimated_font_size * font_vertical_metrics) * line_spacing * estimated_lines
+                    heading_extra_space = estimated_font_size if is_heading else 0
+                    para_height = base_line_height + spacing_before + spacing_after + heading_extra_space + 3
+                    
+                    cumulative_height_pt += para_height
+                    if cumulative_height_pt > available_height_pt:
+                        current_page += 1
+                        cumulative_height_pt = para_height
+                        
+                    para_pages[temp_para_index] = current_page
+                    temp_para_index += 1
 
         # Track sections and their start pages
         section_styles = [doc_style]
         section_start_pages = {0: 1}
         current_section_idx = 0
         temp_para_index = 0
+        current_page = 1
         for element in content:
             if "sectionBreak" in element:
                 sb = element["sectionBreak"]
                 style = sb.get("sectionStyle", {})
                 section_styles.append(style)
                 
+                # A section break of type NEXT_PAGE implies the new section starts on the next page
+                if style.get("sectionType") == "NEXT_PAGE":
+                    current_page += 1
+                
                 next_section_idx = current_section_idx + 1
-                section_start_pages[next_section_idx] = para_pages.get(temp_para_index, current_page)
+                section_start_pages[next_section_idx] = current_page
                 current_section_idx = next_section_idx
-            if "paragraph" in element:
+            elif "paragraph" in element:
+                # Update current_page based on para_pages for accuracy, but don't let it go backwards
+                current_page = max(current_page, para_pages.get(temp_para_index, current_page))
+                
+                # Check for explicit page break in paragraph elements to ensure current_page advances
+                has_page_break = any("pageBreak" in elem for elem in element["paragraph"].get("elements", []))
+                if has_page_break:
+                    current_page += 1
+                    
                 temp_para_index += 1
 
         headers = document.get("headers", {})
@@ -509,11 +629,32 @@ class GoogleDocsService:
                 first_numbered_section_idx = idx
                 break
 
+        # Fallback global check if section styles didn't explicitly link it
         has_page_numbers = first_numbered_section_idx != -1
+        if not has_page_numbers:
+            for h in headers.values():
+                if self._contains_page_number(h.get("content", [])):
+                    has_page_numbers = True
+                    break
+            if not has_page_numbers:
+                for f in footers.values():
+                    if self._contains_page_number(f.get("content", [])):
+                        has_page_numbers = True
+                        break
         numbering_start_page = 0
-        page_number_start = doc_style.get("pageNumberStart", 1)
+        
+        # Use doc_style by default, but override if specific section has page numbers
+        doc_style_start = doc_style.get("pageNumberStart", 1)
+        page_number_start = doc_style_start
 
         if has_page_numbers:
+            if first_numbered_section_idx > 0:
+                if "pageNumberStart" in section_styles[first_numbered_section_idx]:
+                    page_number_start = section_styles[first_numbered_section_idx]["pageNumberStart"]
+                else:
+                    # Continues from previous section, calculate the actual displayed number
+                    page_number_start = doc_style_start + numbering_start_page - 1
+
             if first_numbered_section_idx == 0:
                 use_first_page_h_f = doc_style.get("useFirstPageHeaderFooter", False)
                 if use_first_page_h_f:
@@ -535,6 +676,10 @@ class GoogleDocsService:
                     numbering_start_page = 1
             else:
                 numbering_start_page = section_start_pages.get(first_numbered_section_idx, 1)
+        elif has_page_numbers:
+            # Found globally but not in a specific section style explicitly
+            # Assume it starts where the first section break is, or page 1
+            numbering_start_page = section_start_pages.get(1, 1) if len(section_start_pages) > 1 else 1
 
         return DocumentProperties(
             title=title,
@@ -558,21 +703,27 @@ class GoogleDocsService:
         )
 
     def _contains_page_number(self, content: list) -> bool:
-        """Check if content contains page number element."""
+        """Check if content recursively contains page number element."""
         for element in content:
             if "paragraph" in element:
                 for elem in element["paragraph"].get("elements", []):
-                    if "pageBreak" in elem:
-                        continue
                     if "autoText" in elem:
                         auto_text = elem["autoText"]
                         if auto_text.get("type") == "PAGE_NUMBER":
                             return True
+            elif "table" in element:
+                for row in element["table"].get("tableRows", []):
+                    for cell in row.get("tableCells", []):
+                        if self._contains_page_number(cell.get("content", [])):
+                            return True
+            elif "tableOfContents" in element:
+                if self._contains_page_number(element["tableOfContents"].get("content", [])):
+                    return True
         return False
 
     def _section_has_page_numbers(self, style: dict, headers: dict, footers: dict) -> bool:
-        header_ids = [style.get("defaultHeaderId"), style.get("firstPageHeaderId")]
-        footer_ids = [style.get("defaultFooterId"), style.get("firstPageFooterId")]
+        header_ids = [style.get("defaultHeaderId"), style.get("firstPageHeaderId"), style.get("evenPageHeaderId")]
+        footer_ids = [style.get("defaultFooterId"), style.get("firstPageFooterId"), style.get("evenPageFooterId")]
         
         for h_id in header_ids:
             if h_id and h_id in headers:

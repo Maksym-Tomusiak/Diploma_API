@@ -446,18 +446,18 @@ class DocumentFormatterService:
         
         # Update page number start value if needed
         expected_start = params.start_from_number
+        expected_start_page = params.numbering_start_page
         
         # When page numbering check is enabled, always configure the start page
         if has_page_numbers or params.check_numbering:
             # Calculate what pageNumberStart should be set to in Google Docs
-            
-            if params.skip_first_page:
-                # With "different first page", page 2 will be the first numbered page
-                # Set pageNumberStart to expected_start so page 2 shows that number
-                page_number_value = expected_start
-            else:
-                # Without "different first page", page 1 will be the first numbered page
-                page_number_value = expected_start
+            if params.skip_first_page and expected_start_page <= 1:
+                expected_start_page = 2
+                
+            page_number_value = expected_start - expected_start_page + 1
+            if page_number_value < 1:
+                # Fallback to 1 if it would be 0 or negative (Google Docs does not allow negative pageNumberStart via API)
+                page_number_value = 1
             
             requests.append({
                 "updateDocumentStyle": {
@@ -506,7 +506,8 @@ class DocumentFormatterService:
         structural_requests = []
         
         # Find all text ranges in the document
-        for paragraph_index, element in enumerate(body_content):
+        actual_para_idx = 0
+        for element in body_content:
             if "paragraph" in element:
                 paragraph = element["paragraph"]
                 para_style = paragraph.get("paragraphStyle", {})
@@ -519,10 +520,11 @@ class DocumentFormatterService:
                 is_on_first_page = False
                 if params.skip_first_page:
                     for pls in doc_props.paragraph_line_spacings:
-                        if pls.paragraph_index == paragraph_index:
+                        if pls.paragraph_index == actual_para_idx:
                             is_on_first_page = pls.is_on_first_page
                             break
                     if is_on_first_page:
+                        actual_para_idx += 1
                         continue
                 
                 # --- NEW: Image, Caption and Source Formatting ---
@@ -637,6 +639,8 @@ class DocumentFormatterService:
                                 "fields": "lineSpacing",
                             }
                         })
+                
+                actual_para_idx += 1
         
         # ADD STRUCTURAL CHANGES IN REVERSE ORDER TO PREVENT INDEX SHIFTING
         structural_requests.sort(key=lambda x: x["start"], reverse=True)
