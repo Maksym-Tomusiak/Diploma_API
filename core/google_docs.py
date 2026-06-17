@@ -641,20 +641,13 @@ class GoogleDocsService:
                     if self._contains_page_number(f.get("content", [])):
                         has_page_numbers = True
                         break
-        numbering_start_page = 0
-        
         # Use doc_style by default, but override if specific section has page numbers
         doc_style_start = doc_style.get("pageNumberStart", 1)
         page_number_start = doc_style_start
+        numbering_start_page = 1
 
         if has_page_numbers:
-            if first_numbered_section_idx > 0:
-                if "pageNumberStart" in section_styles[first_numbered_section_idx]:
-                    page_number_start = section_styles[first_numbered_section_idx]["pageNumberStart"]
-                else:
-                    # Continues from previous section, calculate the actual displayed number
-                    page_number_start = doc_style_start + numbering_start_page - 1
-
+            # 1. Determine numbering_start_page
             if first_numbered_section_idx == 0:
                 use_first_page_h_f = doc_style.get("useFirstPageHeaderFooter", False)
                 if use_first_page_h_f:
@@ -674,12 +667,19 @@ class GoogleDocsService:
                         numbering_start_page = 1
                 else:
                     numbering_start_page = 1
-            else:
+            elif first_numbered_section_idx > 0:
                 numbering_start_page = section_start_pages.get(first_numbered_section_idx, 1)
-        elif has_page_numbers:
-            # Found globally but not in a specific section style explicitly
-            # Assume it starts where the first section break is, or page 1
-            numbering_start_page = section_start_pages.get(1, 1) if len(section_start_pages) > 1 else 1
+            else:
+                # first_numbered_section_idx == -1 (global header/footer)
+                numbering_start_page = section_start_pages.get(1, 1) if len(section_start_pages) > 1 else 1
+
+            # 2. Determine page_number_start
+            if first_numbered_section_idx > 0:
+                if "pageNumberStart" in section_styles[first_numbered_section_idx]:
+                    page_number_start = section_styles[first_numbered_section_idx]["pageNumberStart"]
+                else:
+                    # Continues from previous section, calculate the actual displayed number
+                    page_number_start = doc_style_start + numbering_start_page - 1
 
         return DocumentProperties(
             title=title,
