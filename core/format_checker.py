@@ -331,6 +331,18 @@ class FormatCheckerService:
                 actual_start_page = doc_props.numbering_start_page
                 actual_start_number = doc_props.page_number_start
                 
+                # Adjust for Google Docs naive page estimation inaccuracy
+                if expected_start_page > 2:
+                    page_diff = actual_start_page - expected_start_page
+                    if abs(page_diff) <= 3 and page_diff != 0:
+                        # If the displayed number drifted by exactly the same amount as the page estimate,
+                        # it means the section is set to 'Continue from previous' and both values are just artifacts of the estimation error.
+                        if actual_start_number == expected_start_number + page_diff:
+                            actual_start_page = expected_start_page
+                            actual_start_number = expected_start_number
+                            doc_props.numbering_start_page = actual_start_page
+                            doc_props.page_number_start = actual_start_number
+                
                 # Check 1: Start Page mismatch
                 if actual_start_page != expected_start_page:
                     if expected_start_page == 2:
