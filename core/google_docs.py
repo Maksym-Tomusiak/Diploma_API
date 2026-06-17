@@ -611,12 +611,6 @@ class GoogleDocsService:
             elif "paragraph" in element:
                 # Update current_page based on para_pages for accuracy, but don't let it go backwards
                 current_page = max(current_page, para_pages.get(temp_para_index, current_page))
-                
-                # Check for explicit page break in paragraph elements to ensure current_page advances
-                has_page_break = any("pageBreak" in elem for elem in element["paragraph"].get("elements", []))
-                if has_page_break:
-                    current_page += 1
-                    
                 temp_para_index += 1
 
         headers = document.get("headers", {})
