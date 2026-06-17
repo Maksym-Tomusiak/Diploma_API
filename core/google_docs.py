@@ -572,14 +572,14 @@ class GoogleDocsService:
                     estimated_font_size = para_style_defaults.get("font_size") or fallback_size or 11
                     
                     para_text_length = sum(len(elem.get("textRun", {}).get("content", "")) for elem in paragraph.get("elements", []) if "textRun" in elem)
-                    avg_char_width_pt = estimated_font_size * 0.62
+                    avg_char_width_pt = estimated_font_size * 0.52
                     chars_per_line = max(1, content_width_pt / avg_char_width_pt)
                     estimated_lines = math.ceil(para_text_length / chars_per_line) if para_text_length > 0 else 1
                     
-                    font_vertical_metrics = 1.2
+                    font_vertical_metrics = 1.15
                     base_line_height = (estimated_font_size * font_vertical_metrics) * line_spacing * estimated_lines
-                    heading_extra_space = estimated_font_size if is_heading else 0
-                    para_height = base_line_height + spacing_before + spacing_after + heading_extra_space + 3
+                    heading_extra_space = (estimated_font_size * 0.5) if is_heading else 0
+                    para_height = base_line_height + spacing_before + spacing_after + heading_extra_space
                     
                     cumulative_height_pt += para_height
                     if cumulative_height_pt > available_height_pt:
